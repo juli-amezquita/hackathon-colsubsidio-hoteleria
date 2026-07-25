@@ -60,6 +60,7 @@ export type ResolucionArticulo = z.infer<typeof ResolucionArticuloSchema>;
  * desproporcionado.
  */
 export const ToleranciaEntradaSchema = z.object({
+  /** El techo real (0,2%) lo impone el servidor; aquí solo el rango del tipo. */
   porcentaje: z.number().min(0).max(1),
 });
 export type ToleranciaEntrada = z.infer<typeof ToleranciaEntradaSchema>;

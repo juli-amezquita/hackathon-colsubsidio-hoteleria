@@ -13,20 +13,28 @@ import { conexion } from '../../platform/db/cliente';
  *
  * ⚠️ Lo que este servicio NO puede hacer, y es la mitad del valor de la
  * historia: **cambiar el pasado**. Un conteo ya registrado guarda la tolerancia
- * con la que se evaluó (FR-8.2). Subir la merma del 2% al 5% no convierte en
- * conciliado nada de ayer — porque si lo hiciera, este panel sería la forma más
- * fácil de hacer desaparecer una discrepancia sin recontar nada.
+ * con la que se evaluó (FR-8.2). Aflojar la merma no convierte en conciliado
+ * nada de ayer — porque si lo hiciera, este panel sería la forma más fácil de
+ * hacer desaparecer una discrepancia sin recontar nada.
  */
 
 /**
- * Techo de la tolerancia. **PROVISIONAL** — lo confirma el negocio (G-4).
+ * Techo de la tolerancia: **0,2%** (SPEC §4.2).
  *
- * La merma natural de un producto se mide en unidades porcentuales, no en
- * decenas. Un 25% no es una tolerancia: es apagar la validación para esa unidad
- * sin que quede dicho en ninguna parte. Rechazarlo obliga a que desactivar el
- * control sea una decisión explícita y no un número grande escrito de más.
+ * Es el mismo valor con el que opera el sistema, y que sea también el máximo es
+ * deliberado: el panel sirve para AJUSTAR HACIA ABAJO, nunca para aflojar el
+ * control por encima de lo que el negocio aceptó.
+ *
+ * Un inventario tolera que una báscula se desvíe unos gramos; no tolera que se
+ * declare aceptable perder una cuarta parte de la mercancía. Una tolerancia
+ * grande no es una tolerancia: es apagar la validación de esa unidad sin que
+ * quede dicho en ninguna parte, y quien la apagara no tendría que explicárselo
+ * a nadie.
+ *
+ * Subir este número es una decisión de negocio, no de configuración. Vive en el
+ * código a propósito: cambiarlo deja rastro en el repositorio.
  */
-const MAXIMO = 0.25;
+const MAXIMO = 0.002;
 
 export interface ToleranciaVigente {
   readonly unidadId: string;
@@ -82,7 +90,7 @@ export class MermasService {
     if (porcentaje > MAXIMO) {
       throw new BadRequestException({
         codigo: 'TOLERANCIA_DESPROPORCIONADA',
-        mensaje: `La tolerancia máxima es ${MAXIMO * 100}%. Un valor mayor apagaría la validación de esa unidad sin dejarlo dicho.`,
+        mensaje: `La tolerancia máxima es ${MAXIMO * 100}% (SPEC §4.2). Este panel ajusta hacia abajo; aflojar el control por encima de lo aceptado es una decisión de negocio, no de configuración.`,
         detalles: { maximo: MAXIMO },
       });
     }

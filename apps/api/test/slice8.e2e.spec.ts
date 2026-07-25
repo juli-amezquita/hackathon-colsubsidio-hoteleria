@@ -140,18 +140,24 @@ describe('Slice 8 · administración de mermas', () => {
       expect(r.statusCode).toBe(400);
     });
 
-    it('un valor desproporcionado se rechaza, y dice cuál es el techo', async () => {
-      const r = await fijar(0.8);
+    it('un valor por encima del 0,2% se rechaza, y dice cuál es el techo', async () => {
+      // 25% no es una tolerancia de inventario: es declarar aceptable perder
+      // una cuarta parte de la mercancía. El techo es el 0,2% de SPEC §4.2.
+      const r = await fijar(0.05);
       expect(r.statusCode).toBe(400);
 
       const e = r.json<{ codigo: string; mensaje: string }>();
       expect(e.codigo).toBe('TOLERANCIA_DESPROPORCIONADA');
-      // Rechazarlo obliga a que apagar el control sea una decisión explícita.
-      expect(e.mensaje).toMatch(/25%/);
+      expect(e.mensaje).toMatch(/0\.2%/);
+    });
+
+    it('el panel ajusta hacia abajo: 0,2% pasa, 0,21% no', async () => {
+      expect((await fijar(0.002)).statusCode).toBe(200);
+      expect((await fijar(0.0021)).statusCode).toBe(400);
     });
 
     it('fijarla en una unidad que no es de peso avisa que quedará inerte', async () => {
-      const r = await fijar(0.05, unidadNoPeso);
+      const r = await fijar(0.001, unidadNoPeso);
       expect(r.statusCode).toBe(200);
 
       const cuerpo = r.json<{ aplica: boolean; advertencia: string | null }>();
@@ -161,7 +167,7 @@ describe('Slice 8 · administración de mermas', () => {
     });
 
     it('una unidad que no existe da 404', async () => {
-      const r = await fijar(0.02, randomUUID());
+      const r = await fijar(0.001, randomUUID());
       expect(r.statusCode).toBe(404);
     });
   });
@@ -169,20 +175,20 @@ describe('Slice 8 · administración de mermas', () => {
   describe('el rastro del cambio (FR-8.3, FR-8.5, SC-8.1)', () => {
     it('cada cambio queda con autor y momento', async () => {
       await pedir(cookieAdmin, {
-        method: 'PUT', url: `/administracion/mermas/${unidadPeso}`, payload: { porcentaje: 0.0123 },
+        method: 'PUT', url: `/administracion/mermas/${unidadPeso}`, payload: { porcentaje: 0.0012 },
       });
 
       const { items } = (await pedir(cookieAdmin, {
         method: 'GET', url: `/administracion/mermas/historial?unidadId=${unidadPeso}`,
       })).json<{ items: { porcentaje: string; usuario: string; cambiadoEn: string }[] }>();
 
-      expect(Number(items[0]!.porcentaje)).toBe(0.0123);
+      expect(Number(items[0]!.porcentaje)).toBe(0.0012);
       expect(items[0]!.usuario).toBe('Administrador de Prueba');
       expect(new Date(items[0]!.cambiadoEn).getTime()).toBeGreaterThan(Date.now() - 60_000);
     });
 
     it('el historial conserva los valores anteriores, no solo el último', async () => {
-      for (const p of [0.01, 0.02, 0.03]) {
+      for (const p of [0.0005, 0.001, 0.002]) {
         await pedir(cookieAdmin, {
           method: 'PUT', url: `/administracion/mermas/${unidadPeso}`, payload: { porcentaje: p },
         });
@@ -193,7 +199,7 @@ describe('Slice 8 · administración de mermas', () => {
       })).json<{ items: { porcentaje: string }[] }>();
 
       // Más reciente primero.
-      expect(items.slice(0, 3).map((i) => Number(i.porcentaje))).toEqual([0.03, 0.02, 0.01]);
+      expect(items.slice(0, 3).map((i) => Number(i.porcentaje))).toEqual([0.002, 0.001, 0.0005]);
     });
   });
 
@@ -239,35 +245,37 @@ describe('Slice 8 · administración de mermas', () => {
     const fijar = (porcentaje: number) =>
       pedir(cookieAdmin, { method: 'PUT', url: `/administracion/mermas/${unidadPeso}`, payload: { porcentaje } });
 
+    // 999,8 sobre 1000 es una diferencia de 0,2 kg — exactamente el 0,02%.
+    // Con el techo en 0,2% los ejemplos son de este orden: son las magnitudes
+    // reales de una merma, no las de un error de conteo.
     it('subir la tolerancia hace que un conteo que antes alertaba ya no alerte', async () => {
-      // 90 contra 100 es una diferencia del 10%.
-      await fijar(0.02);
-      const { bodegaId: b1, articuloId: a1 } = await bodegaConPeso('100.000');
-      expect((await contar(b1, a1, 90)).validacion.resultado).toBe('alerta_discrepancia');
+      await fijar(0.0001);
+      const { bodegaId: b1, articuloId: a1 } = await bodegaConPeso('1000.000');
+      expect((await contar(b1, a1, 999.8)).validacion.resultado).toBe('alerta_discrepancia');
 
-      await fijar(0.15);
-      const { bodegaId: b2, articuloId: a2 } = await bodegaConPeso('100.000');
-      expect((await contar(b2, a2, 90)).validacion.resultado).toBe('aceptado');
+      await fijar(0.002);
+      const { bodegaId: b2, articuloId: a2 } = await bodegaConPeso('1000.000');
+      expect((await contar(b2, a2, 999.8)).validacion.resultado).toBe('aceptado');
     });
 
     it('bajarla hace que un conteo que antes pasaba ahora alerte', async () => {
-      await fijar(0.15);
-      const { bodegaId: b1, articuloId: a1 } = await bodegaConPeso('100.000');
-      expect((await contar(b1, a1, 90)).validacion.resultado).toBe('aceptado');
+      await fijar(0.002);
+      const { bodegaId: b1, articuloId: a1 } = await bodegaConPeso('1000.000');
+      expect((await contar(b1, a1, 999.8)).validacion.resultado).toBe('aceptado');
 
       await fijar(0);
-      const { bodegaId: b2, articuloId: a2 } = await bodegaConPeso('100.000');
-      expect((await contar(b2, a2, 90)).validacion.resultado).toBe('alerta_discrepancia');
+      const { bodegaId: b2, articuloId: a2 } = await bodegaConPeso('1000.000');
+      expect((await contar(b2, a2, 999.8)).validacion.resultado).toBe('alerta_discrepancia');
     });
 
     it('⭐ un conteo YA registrado no cambia de resultado (SC-8.2)', async () => {
-      await fijar(0.02);
-      const { bodegaId: b, articuloId: a } = await bodegaConPeso('100.000');
-      const registro = await contar(b, a, 90);
+      await fijar(0.0001);
+      const { bodegaId: b, articuloId: a } = await bodegaConPeso('1000.000');
+      const registro = await contar(b, a, 999.8);
       expect(registro.validacion.resultado).toBe('alerta_discrepancia');
 
-      // El Administrador sube la merma hasta que 90 contra 100 cabría.
-      await fijar(0.15);
+      // El Administrador sube la merma hasta que 999,8 sobre 1000 cabría.
+      await fijar(0.002);
 
       const [fila] = await sql<{ resultado_validacion: string; tolerancia_aplicada: string }[]>`
         SELECT resultado_validacion, tolerancia_aplicada FROM registro_conteo
@@ -276,19 +284,19 @@ describe('Slice 8 · administración de mermas', () => {
       // Si esto cambiara, el panel sería la forma más fácil de hacer
       // desaparecer una discrepancia sin recontar nada.
       expect(fila!.resultado_validacion).toBe('alerta_discrepancia');
-      expect(Number(fila!.tolerancia_aplicada)).toBe(0.02);
+      expect(Number(fila!.tolerancia_aplicada)).toBe(0.0001);
     });
 
     it('el cambio se ve de inmediato: la caché se invalida, no se espera al TTL', async () => {
       // Sin invalidación explícita esto tardaría hasta 15 minutos, y un
       // Administrador que no ve efecto concluye que el panel no sirve.
       await fijar(0);
-      const { bodegaId: b1, articuloId: a1 } = await bodegaConPeso('50.000');
-      expect((await contar(b1, a1, 49)).validacion.resultado).toBe('alerta_discrepancia');
+      const { bodegaId: b1, articuloId: a1 } = await bodegaConPeso('500.000');
+      expect((await contar(b1, a1, 499.5)).validacion.resultado).toBe('alerta_discrepancia');
 
-      await fijar(0.05);
-      const { bodegaId: b2, articuloId: a2 } = await bodegaConPeso('50.000');
-      expect((await contar(b2, a2, 49)).validacion.resultado).toBe('aceptado');
+      await fijar(0.002);
+      const { bodegaId: b2, articuloId: a2 } = await bodegaConPeso('500.000');
+      expect((await contar(b2, a2, 499.5)).validacion.resultado).toBe('aceptado');
     });
   });
 });
