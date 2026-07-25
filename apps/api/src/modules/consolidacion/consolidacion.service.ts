@@ -101,7 +101,32 @@ export class ConsolidacionService implements Consumidor {
       await this.guardar(trx, bodegaId, id, clasificar(porArticulo.get(id) ?? [], porAuditor.get(id)));
     }
 
+    await this.escalarFantasmas(trx, bodegaId);
+
     return articulos.length;
+  }
+
+  /**
+   * H5-03 · Todo hallazgo sin catálogo va al Auditor. Siempre (FR-5.3).
+   *
+   * No hay clasificación que calcular: un producto que no está en el catálogo
+   * no tiene saldo esperado, no tiene contra qué compararse y no existe regla
+   * automática que pueda darlo por bueno. Por eso ni siquiera pasa por
+   * `clasificar`: va directo a la bandeja.
+   *
+   * **Una discrepancia por hallazgo, sin fusionar** (FR-5.5). Dos rondas que
+   * describen "caja de galletas surtidas" pueden estar viendo dos cajas o la
+   * misma, y decidirlo mirando texto es precisamente lo que el sistema no debe
+   * hacer por su cuenta. El índice único sobre `fantasma_id` lo garantiza.
+   */
+  private async escalarFantasmas(trx: postgres.TransactionSql, bodegaId: string): Promise<void> {
+    await trx`
+      INSERT INTO discrepancia (id, bodega_id, fantasma_id, motivo)
+      SELECT gen_random_uuid(), ${bodegaId}, pf.id, 'producto_fantasma'
+      FROM producto_fantasma pf
+      JOIN ronda_cierre rc ON rc.ronda_id = pf.ronda_id
+      WHERE pf.bodega_id = ${bodegaId}
+      ON CONFLICT (fantasma_id) WHERE fantasma_id IS NOT NULL DO NOTHING`;
   }
 
   private async guardar(

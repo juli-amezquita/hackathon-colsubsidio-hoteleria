@@ -147,14 +147,7 @@ export class AuditoriaService {
       throw new NotFoundException({ codigo: 'ARTICULO_NO_ENCONTRADO', mensaje: 'El artículo no pertenece a la bodega.' });
     }
 
-    const [razon] = await conexion()<{ id: string }[]>`
-      SELECT id FROM codigo_razon WHERE id = ${entrada.codigoRazonId} AND activo`;
-    if (!razon) {
-      throw new BadRequestException({
-        codigo: 'RAZON_NO_VALIDA',
-        mensaje: 'El código de razón no pertenece al catálogo controlado.',
-      });
-    }
+    await this.exigirRazonValida(entrada.codigoRazonId);
 
     return conexion().begin(async (trx) => {
       // FR-4.7 · No se prohíbe auditar una bodega propia: se SEÑALA. Prohibirlo
@@ -231,14 +224,146 @@ export class AuditoriaService {
    * los conteos y no cambia—, lo que cambia es si alguien ya lo atendió.
    */
   async pendientes(bodegaId: string) {
-    const filas = await conexion()<{ articulo_id: string; nombre: string; motivo: string }[]>`
-      SELECT d.articulo_id, a.nombre, d.motivo
+    // Artículos y hallazgos sin catálogo salen en la MISMA bandeja: para el
+    // Auditor son la misma clase de trabajo —ir al estante y explicar— y
+    // partirlos en dos pantallas solo lograría que una de las dos se olvide.
+    const filas = await conexion()<
+      { articulo_id: string | null; fantasma_id: string | null; nombre: string; motivo: string; descripcion: string | null; unidad_observada: string | null; cantidad: string | null }[]
+    >`
+      SELECT d.articulo_id, d.fantasma_id,
+             COALESCE(a.nombre, pf.descripcion) AS nombre,
+             d.motivo,
+             pf.descripcion, pf.unidad_observada, pf.cantidad
       FROM discrepancia d
-      JOIN articulo a ON a.id = d.articulo_id
+      LEFT JOIN articulo a           ON a.id = d.articulo_id
+      LEFT JOIN producto_fantasma pf ON pf.id = d.fantasma_id
       WHERE d.bodega_id = ${bodegaId} AND d.estado <> 'cerrada'
-      ORDER BY d.motivo, a.nombre`;
+      ORDER BY d.motivo, 3`;
 
-    return filas.map((f) => ({ articuloId: f.articulo_id, nombre: f.nombre, motivo: f.motivo }));
+    return filas.map((f) => ({
+      articuloId: f.articulo_id,
+      fantasmaId: f.fantasma_id,
+      nombre: f.nombre,
+      motivo: f.motivo,
+      // Solo en los hallazgos sin catálogo. Es lo único que el Auditor tiene
+      // para identificarlos: no hay código ni nombre canónico.
+      descripcion: f.descripcion,
+      unidadObservada: f.unidad_observada,
+      cantidadReportada: f.cantidad,
+    }));
+  }
+
+  /**
+   * H5-05 · El caso de un hallazgo sin catálogo.
+   *
+   * Trae lo que el operario describió, lo que el sistema le ofreció del
+   * catálogo y él descartó, y los hallazgos de OTRAS rondas que podrían ser el
+   * mismo — presentados, nunca fusionados (FR-5.5).
+   */
+  async casoFantasma(bodegaId: string, fantasmaId: string) {
+    const [f] = await conexion()<
+      { id: string; descripcion: string; unidad_observada: string; cantidad: string; operador: string; recibido_en: Date; modo_captura: string; candidatos_catalogo: unknown; ronda_id: string }[]
+    >`
+      SELECT pf.id, pf.descripcion, pf.unidad_observada, pf.cantidad,
+             u.nombre AS operador, pf.recibido_en, pf.modo_captura,
+             pf.candidatos_catalogo, pf.ronda_id
+      FROM producto_fantasma pf
+      JOIN ronda r   ON r.id = pf.ronda_id
+      JOIN usuario u ON u.id = r.operador_id
+      WHERE pf.id = ${fantasmaId} AND pf.bodega_id = ${bodegaId}`;
+
+    if (!f) {
+      throw new NotFoundException({ codigo: 'FANTASMA_NO_ENCONTRADO', mensaje: 'Hallazgo no disponible.' });
+    }
+
+    const otros = await conexion()<
+      { id: string; descripcion: string; cantidad: string; operador: string; ronda_id: string }[]
+    >`
+      SELECT pf.id, pf.descripcion, pf.cantidad, u.nombre AS operador, pf.ronda_id
+      FROM producto_fantasma pf
+      JOIN ronda r   ON r.id = pf.ronda_id
+      JOIN usuario u ON u.id = r.operador_id
+      WHERE pf.bodega_id = ${bodegaId} AND pf.id <> ${fantasmaId}
+      ORDER BY pf.recibido_en`;
+
+    return {
+      fantasmaId: f.id,
+      descripcion: f.descripcion,
+      unidadObservada: f.unidad_observada,
+      cantidad: f.cantidad,
+      operador: f.operador,
+      rondaId: f.ronda_id,
+      modoCaptura: f.modo_captura,
+      recibidoEn: f.recibido_en.toISOString(),
+      // Lo que el sistema le ofreció y la persona que lo tenía en la mano
+      // descartó. Es evidencia, no telemetría (H5-04).
+      candidatosDescartados: f.candidatos_catalogo,
+      // Hallazgos de otras rondas. Se PRESENTAN; unirlos es del Auditor.
+      otrosHallazgos: otros.map((o) => ({
+        fantasmaId: o.id,
+        descripcion: o.descripcion,
+        cantidad: o.cantidad,
+        operador: o.operador,
+        rondaId: o.ronda_id,
+      })),
+      // Sin `saldoEsperado` y sin `diferencia`: no existe saldo contra el cual
+      // comparar un producto que el catálogo no conoce (FR-5.4).
+    };
+  }
+
+  /** Resuelve un hallazgo sin catálogo. Exige causa, igual que un artículo. */
+  async resolverFantasma(bodegaId: string, fantasmaId: string, auditorId: string, entrada: ReconteoEntrada) {
+    const [f] = await conexion()<{ id: string }[]>`
+      SELECT id FROM producto_fantasma WHERE id = ${fantasmaId} AND bodega_id = ${bodegaId}`;
+    if (!f) {
+      throw new NotFoundException({ codigo: 'FANTASMA_NO_ENCONTRADO', mensaje: 'Hallazgo no disponible.' });
+    }
+    await this.exigirRazonValida(entrada.codigoRazonId);
+
+    return conexion().begin(async (trx) => {
+      const [previo] = await trx<{ maxima: number | null }[]>`
+        SELECT max(secuencia) AS maxima FROM reconteo
+        WHERE fantasma_id = ${fantasmaId} AND clave_idempotencia <> ${entrada.claveIdempotencia}`;
+
+      const filas = await trx<{ id: string; secuencia: number; recibido_en: Date }[]>`
+        INSERT INTO reconteo
+          (id, bodega_id, fantasma_id, auditor_id, secuencia, cantidad, unidad_id,
+           codigo_razon_id, modo_captura, capturado_en, clave_idempotencia)
+        VALUES (${randomUUID()}, ${bodegaId}, ${fantasmaId}, ${auditorId},
+                ${(previo?.maxima ?? 0) + 1}, ${entrada.cantidad}, ${entrada.unidadId},
+                ${entrada.codigoRazonId}, ${entrada.modoCaptura}, ${entrada.capturadoEn},
+                ${entrada.claveIdempotencia})
+        ON CONFLICT (clave_idempotencia) DO NOTHING
+        RETURNING id, secuencia, recibido_en`;
+
+      const fila = filas[0] ?? (await trx<{ id: string; secuencia: number; recibido_en: Date }[]>`
+        SELECT id, secuencia, recibido_en FROM reconteo
+        WHERE clave_idempotencia = ${entrada.claveIdempotencia}`)[0];
+
+      if (!fila) throw new Error('El reconteo no se guardó ni existía previamente.');
+
+      await trx`
+        UPDATE discrepancia
+           SET estado = 'cerrada', codigo_razon_id = ${entrada.codigoRazonId}, cerrada_en = now()
+         WHERE fantasma_id = ${fantasmaId} AND estado <> 'cerrada'`;
+
+      return {
+        reconteoId: fila.id,
+        secuencia: fila.secuencia,
+        recibidoEn: fila.recibido_en.toISOString(),
+      };
+    });
+  }
+
+  private async exigirRazonValida(codigoRazonId: string): Promise<void> {
+    const [razon] = await conexion()<{ id: string }[]>`
+      SELECT id FROM codigo_razon WHERE id = ${codigoRazonId} AND activo`;
+    if (!razon) {
+      throw new BadRequestException({
+        codigo: 'RAZON_NO_VALIDA',
+        mensaje: 'El código de razón no pertenece al catálogo controlado.',
+      });
+    }
   }
 
   private async reconteosDe(bodegaId: string, articuloId: string, trx?: postgres.TransactionSql) {

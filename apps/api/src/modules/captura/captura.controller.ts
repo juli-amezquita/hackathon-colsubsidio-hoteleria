@@ -2,6 +2,7 @@ import { Body, Controller, Get, Inject, Param, Post, Req } from '@nestjs/common'
 import {
   CierreRondaSchema,
   EvidenciaEntradaSchema,
+  ProductoFantasmaEntradaSchema,
   RegistroEntradaSchema,
   ResolucionEntradaSchema,
   type ArticuloDeTrabajo,
@@ -85,6 +86,22 @@ export class CapturaController {
     @Req() req: PeticionAutenticada,
   ) {
     return this.rondas.adjuntarEvidencia(rondaId, req.usuario!.usuarioId, registroId, datos);
+  }
+
+  /**
+   * H5-01 · Hallazgo sin correspondencia en el catálogo (FR-5.1).
+   *
+   * Ruta aparte de `/registros` a propósito: un fantasma no es un conteo con
+   * el nombre en blanco, es otra clase de hecho.
+   */
+  @Post(':rondaId/fantasmas')
+  @Roles('operador')
+  fantasma(
+    @Param('rondaId') rondaId: string,
+    @Body(cuerpo(ProductoFantasmaEntradaSchema)) entrada: never,
+    @Req() req: PeticionAutenticada,
+  ) {
+    return this.rondas.registrarFantasma(rondaId, req.usuario!.usuarioId, entrada);
   }
 
   @Get(':rondaId/cuadre-cierre')

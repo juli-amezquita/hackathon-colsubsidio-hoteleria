@@ -45,6 +45,25 @@ export class AuditoriaController {
     return this.auditoria.caso(bodegaId, articuloId, req.usuario!.usuarioId);
   }
 
+  /** El caso de un hallazgo sin catálogo (H5-05). */
+  @Get('bodegas/:bodegaId/fantasmas/:fantasmaId')
+  @Roles('auditor', 'administrador')
+  fantasma(@Param('bodegaId') bodegaId: string, @Param('fantasmaId') fantasmaId: string) {
+    return this.auditoria.casoFantasma(bodegaId, fantasmaId);
+  }
+
+  /** Resuelve un hallazgo sin catálogo. Con causa, igual que un artículo. */
+  @Post('bodegas/:bodegaId/fantasmas/:fantasmaId/resolucion')
+  @Roles('auditor')
+  resolverFantasma(
+    @Param('bodegaId') bodegaId: string,
+    @Param('fantasmaId') fantasmaId: string,
+    @Body(cuerpo(ReconteoEntradaSchema)) entrada: never,
+    @Req() req: PeticionAutenticada,
+  ) {
+    return this.auditoria.resolverFantasma(bodegaId, fantasmaId, req.usuario!.usuarioId, entrada);
+  }
+
   /** El reconteo, con su causa. Prevalece sobre el conteo de los Operadores. */
   @Post('bodegas/:bodegaId/articulos/:articuloId/reconteo')
   @Roles('auditor')

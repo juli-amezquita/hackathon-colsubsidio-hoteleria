@@ -18,6 +18,17 @@ export interface ProveedorDeCatalogo {
   /** Catálogo de la bodega. Se cachea en el dispositivo (F-21). Sin saldos. */
   listar(bodegaId: string): Promise<ArticuloDeTrabajo[]>;
 
+  /**
+   * Artículos del catálogo cuyo NOMBRE aparece dentro de un texto largo.
+   *
+   * Es distinto de `resolver`: aquel compara dos nombres, este busca un nombre
+   * dentro de una frase. Un hallazgo se describe en una oración —"caja de
+   * galletas Festival vainilla x12"— y comparar esa oración entera contra
+   * "GALLETAS FESTIVAL" da una similitud baja aunque el artículo esté ahí
+   * mismo, nombrado. Sin esto, la comprobación de H5-04 no dispararía nunca.
+   */
+  contenidosEn(bodegaId: string, texto: string): Promise<ArticuloDeTrabajo[]>;
+
   /** Un artículo por id, para validar que pertenece a la bodega. */
   buscar(bodegaId: string, articuloId: string): Promise<ArticuloDeTrabajo | null>;
 

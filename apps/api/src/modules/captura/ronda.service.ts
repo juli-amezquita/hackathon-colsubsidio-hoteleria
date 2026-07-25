@@ -6,6 +6,7 @@ import type {
   DecisionCierre,
   EvidenciaEntrada,
   RegistroAceptado,
+  ProductoFantasmaEntrada,
   RegistroEntrada,
   Ronda,
 } from '@cci/contracts';
@@ -15,6 +16,7 @@ import { conexion } from '../../platform/db/cliente';
 import { PROVEEDOR_CATALOGO, type ProveedorDeCatalogo } from '../../platform/dominio/catalogo';
 import { EVENT_BUS, type EventBus } from '../../platform/eventos/bus';
 import { desfaseReloj, insertarIdempotente } from '../../platform/idempotencia/idempotencia';
+import { evaluarDescripcion } from './descripcion';
 import { type Resultado, type Veredicto, validar } from './validacion';
 
 /** Los dos veredictos que dejan una alerta abierta. */
@@ -455,6 +457,93 @@ export class RondaService {
       });
 
       return { rondaId, cerrada: true, articulosResueltos: resueltos[0]?.n ?? 0 };
+    });
+  }
+
+  /**
+   * H5-01 a H5-04 · Registra un hallazgo sin correspondencia en el catálogo.
+   *
+   * Va por su propia ruta y su propia tabla, no por `registro_conteo`, y eso
+   * resuelve H5-02 por construcción: **no hay dónde poner una validación de
+   * discrepancia** porque no hay saldo contra el cual comparar (FR-5.4). No es
+   * un `if` que alguien pueda quitar; es que la columna no existe.
+   */
+  async registrarFantasma(rondaId: string, operadorId: string, entrada: ProductoFantasmaEntrada) {
+    const ronda = await this.rondaAbiertaDe(rondaId, operadorId);
+
+    const veredicto = evaluarDescripcion(entrada.descripcion);
+    if (!veredicto.aceptada) {
+      throw new BadRequestException({ codigo: 'DESCRIPCION_INSUFICIENTE', mensaje: veredicto.motivo });
+    }
+
+    // H5-04 · Antes de crear un fantasma, se pregunta al catálogo.
+    //
+    // La mayoría de los hallazgos "sin registrar" son un nombre mal dicho o mal
+    // transcrito. Crear un fantasma por cada uno llenaría la bandeja del
+    // Auditor de casos que se resuelven mirando el catálogo dos segundos, y la
+    // bandeja dejaría de ser la lista corta que justifica todo el sistema.
+    const candidatos = await this.catalogo.contenidosEn(ronda.bodega_id, entrada.descripcion);
+
+    // Se pregunta, no se impide. Quien tiene el producto en la mano es el
+    // operario; el sistema solo se asegura de que haya mirado la lista.
+    if (candidatos.length > 0 && !entrada.confirmaNoEsDelCatalogo) {
+      throw new ConflictException({
+        codigo: 'POSIBLE_ARTICULO_DEL_CATALOGO',
+        mensaje: 'El catálogo tiene artículos parecidos. Revíselos antes de reportarlo como no registrado.',
+        detalles: { candidatos },
+      });
+    }
+
+    return conexion().begin(async (trx) => {
+      const resultado = await insertarIdempotente(trx, {
+        tabla: 'producto_fantasma',
+        clave: entrada.claveIdempotencia,
+        insertar: async (t) => {
+          // Los candidatos van por `t.json`, no por JSON.stringify: postgres.js
+          // ya serializa, así que una cadena previa guardaría texto dentro del
+          // jsonb y quien lo leyera recibiría una cadena donde espera una lista.
+          const f = await t<{ id: string; recibido_en: Date }[]>`
+            INSERT INTO producto_fantasma
+              (id, ronda_id, bodega_id, descripcion, unidad_observada, cantidad,
+               modo_captura, capturado_en, clave_idempotencia, candidatos_catalogo)
+            VALUES (${randomUUID()}, ${rondaId}, ${ronda.bodega_id}, ${entrada.descripcion.trim()},
+                    ${entrada.unidadObservada}, ${entrada.cantidad},
+                    ${entrada.modoCaptura}, ${entrada.capturadoEn}, ${entrada.claveIdempotencia},
+                    ${t.json(candidatos)})
+            ON CONFLICT (clave_idempotencia) DO NOTHING
+            RETURNING id, recibido_en`;
+          return f[0];
+        },
+        recuperar: async (t) => {
+          const f = await t<{ id: string; recibido_en: Date }[]>`
+            SELECT id, recibido_en FROM producto_fantasma
+            WHERE clave_idempotencia = ${entrada.claveIdempotencia}`;
+          return f[0];
+        },
+      });
+
+      if (resultado.creado) {
+        await this.bus.publicar(trx, {
+          tipo: 'ProductoFantasmaRegistrado',
+          actorId: operadorId,
+          payload: {
+            fantasmaId: resultado.valor.id,
+            rondaId,
+            bodegaId: ronda.bodega_id,
+            descripcion: entrada.descripcion.trim(),
+            unidadObservada: entrada.unidadObservada,
+            cantidad: entrada.cantidad,
+          },
+        });
+      }
+
+      return {
+        fantasmaId: resultado.valor.id,
+        recibidoEn: resultado.valor.recibido_en.toISOString(),
+        // Fíjate en lo que NO hay aquí: ningún veredicto de validación. No
+        // existe saldo esperado contra el cual comparar (FR-5.4).
+        candidatosDescartados: candidatos.length,
+      };
     });
   }
 

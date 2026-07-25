@@ -143,5 +143,12 @@ export const ProductoFantasmaEntradaSchema = z.object({
   modoCaptura: ModoCapturaSchema,
   capturadoEn: MomentoSchema,
   claveIdempotencia: ClaveIdempotenciaSchema,
+
+  /**
+   * El operario ya vio los artículos parecidos del catálogo y afirma que
+   * ninguno es (H5-04). Sin esta bandera, un hallazgo que se parece a algo
+   * del catálogo se rechaza con la lista, para que la mire.
+   */
+  confirmaNoEsDelCatalogo: z.boolean().default(false),
 });
 export type ProductoFantasmaEntrada = z.infer<typeof ProductoFantasmaEntradaSchema>;

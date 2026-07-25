@@ -78,6 +78,26 @@ describe('Slice 4 · reconteo del Auditor', () => {
     await sql.end({ timeout: 5 });
   });
 
+  /**
+   * Espera a que el evento de ESTA bodega quede despachado.
+   *
+   * No basta con drenar el outbox: varias suites corren en paralelo, cada una
+   * con su propio despachador, y `FOR UPDATE SKIP LOCKED` hace que el evento
+   * propio se lo pueda llevar el despachador de otra —correcto en producción,
+   * indeterminista en una prueba—. Se espera por la condición concreta.
+   */
+  const drenar = async (bodega: string): Promise<void> => {
+    for (let i = 0; i < 40; i++) {
+      await despachador.pasada();
+      const [p] = await sql<{ n: number }[]>`
+        SELECT count(*)::int n FROM outbox
+        WHERE despachado_en IS NULL AND payload->>'bodegaId' = ${bodega}`;
+      if ((p?.n ?? 0) === 0) return;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    throw new Error(`El evento de la bodega ${bodega} no se despachó a tiempo.`);
+  };
+
   const bodegaAislada = async (
     articulos: readonly { nombre: string; saldo: string | null }[],
   ): Promise<{ bodegaId: string; ids: string[] }> => {
@@ -135,7 +155,7 @@ describe('Slice 4 · reconteo del Auditor', () => {
         })),
       },
     });
-    await despachador.pasada();
+    await drenar(bodega);
   };
 
   const recontar = (bodega: string, articuloId: string, cantidad: number, razon = 'ERROR_CONTEO', cookie = cookieAuditor) =>

@@ -30,6 +30,16 @@ const UMBRAL_MARGEN = 0.15;
 
 const MAX_CANDIDATOS = 5;
 
+/**
+ * Umbral para "este nombre aparece en esta frase" (H5-04).
+ *
+ * Más alto que el de aceptación porque el coste del error es asimétrico: pasarse
+ * de sensible obliga al operario a descartar una lista en cada hallazgo, y a la
+ * tercera vez marcará la casilla sin leerla — con lo que la comprobación deja
+ * de existir aunque el código siga ahí.
+ */
+const UMBRAL_CONTENIDO = 0.6;
+
 interface FilaCandidata {
   readonly id: string;
   readonly nombre: string;
@@ -147,6 +157,32 @@ export class ResolucionService implements ProveedorDeCatalogo {
 
       return filas.map((f) => this.aArticulo(f as unknown as FilaCandidata));
     });
+  }
+
+  /**
+   * H5-04 · Busca nombres del catálogo DENTRO de una descripción.
+   *
+   * `word_similarity` compara el mejor fragmento del segundo argumento contra
+   * el primero, que es exactamente la pregunta: "¿este nombre del catálogo
+   * aparece en lo que la persona describió?". `similarity` compararía las dos
+   * cadenas completas y una frase de diez palabras nunca se parecería a un
+   * nombre de dos, por evidente que fuera la coincidencia.
+   */
+  contenidosEn(bodegaId: string, texto: string): Promise<ArticuloDeTrabajo[]> {
+    const objetivo = normalizar(texto);
+    if (!objetivo) return Promise.resolve([]);
+
+    return conexion()<FilaCandidata[]>`
+      SELECT a.id, a.nombre, a.codigo,
+             u.id AS unidad_id, u.nombre AS unidad_nombre, u.es_peso,
+             word_similarity(a.nombre_normalizado, ${objetivo}) AS puntaje,
+             false AS via_alias
+      FROM articulo a
+      JOIN unidad_medida u ON u.id = a.unidad_esperada_id
+      WHERE a.bodega_id = ${bodegaId} AND a.activo
+        AND word_similarity(a.nombre_normalizado, ${objetivo}) >= ${UMBRAL_CONTENIDO}
+      ORDER BY puntaje DESC
+      LIMIT ${MAX_CANDIDATOS}`.then((filas) => filas.map((f) => this.aArticulo(f)));
   }
 
   async buscar(bodegaId: string, articuloId: string): Promise<ArticuloDeTrabajo | null> {

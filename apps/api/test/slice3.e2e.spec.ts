@@ -79,6 +79,26 @@ describe('Slice 3 · consolidación y clasificación', () => {
   });
 
   /**
+   * Espera a que el evento de ESTA bodega quede despachado.
+   *
+   * No basta con drenar el outbox: varias suites corren en paralelo, cada una
+   * con su propio despachador, y `FOR UPDATE SKIP LOCKED` hace que el evento
+   * propio se lo pueda llevar el despachador de otra —correcto en producción,
+   * indeterminista en una prueba—. Se espera por la condición concreta.
+   */
+  const drenar = async (bodega: string): Promise<void> => {
+    for (let i = 0; i < 40; i++) {
+      await despachador.pasada();
+      const [p] = await sql<{ n: number }[]>`
+        SELECT count(*)::int n FROM outbox
+        WHERE despachado_en IS NULL AND payload->>'bodegaId' = ${bodega}`;
+      if ((p?.n ?? 0) === 0) return;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    throw new Error(`El evento de la bodega ${bodega} no se despachó a tiempo.`);
+  };
+
+  /**
    * Cada prueba trabaja sobre una bodega propia y desechable.
    *
    * Consolidar acumula TODAS las rondas cerradas de la bodega, así que dos
@@ -158,7 +178,7 @@ describe('Slice 3 · consolidación y clasificación', () => {
     expect(cierre.statusCode).toBe(201);
 
     // El evento viaja por el outbox, igual que en producción.
-    await despachador.pasada();
+    await drenar(bodega);
     return rondaId;
   };
 

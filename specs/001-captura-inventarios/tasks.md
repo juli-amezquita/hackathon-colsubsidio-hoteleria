@@ -182,13 +182,13 @@ Cada slice atraviesa datos → dominio → API → UI → pruebas, y termina en 
 
 ### Slice 5 — Productos fantasma (P5)
 
-| # | Tarea |
-|---|---|
-| H5-01 | Registro con descripción detallada (criterios objetivos de rechazo) y unidad observada |
-| H5-02 | Sin validación de discrepancia: no hay saldo contra el cual comparar |
-| H5-03 | Escalado **siempre** a auditable, sin fusionar hallazgos de rondas distintas |
-| H5-04 | Búsqueda `pg_trgm` para confirmar que no existía en catálogo |
-| H5-05 | Test de la historia 5 |
+| # | Tarea | Estado |
+|---|---|---|
+| H5-01 | Registro con descripción detallada (criterios objetivos de rechazo) y unidad observada | ✅ criterios objetivos con motivo accionable; sin juicio de modelo |
+| H5-02 | Sin validación de discrepancia: no hay saldo contra el cual comparar | ✅ ruta y tabla propias: no hay dónde poner una validación |
+| H5-03 | Escalado **siempre** a auditable, sin fusionar hallazgos de rondas distintas | ✅ discrepancia por hallazgo; índice único impide fusionar |
+| H5-04 | Búsqueda `pg_trgm` para confirmar que no existía en catálogo | ✅ `word_similarity`: busca el nombre DENTRO de la descripción |
+| H5-05 | Test de la historia 5 | ✅ 17 pruebas e2e + 8 de los criterios |
 
 ### Slice 6 — Continuidad ante pérdida de red (P6)
 
