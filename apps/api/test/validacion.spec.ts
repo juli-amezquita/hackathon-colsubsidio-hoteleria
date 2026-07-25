@@ -1,12 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  MAX_VERIFICACIONES,
-  aEntero,
-  dentroDeTolerancia,
-  validar,
-  type ContextoValidacion,
-} from '../src/modules/captura/validacion';
+import { MAX_VERIFICACIONES, validar, type ContextoValidacion } from '../src/modules/captura/validacion';
+import { aEntero, dentroDeTolerancia } from '../src/platform/numeros/decimal';
 
 /**
  * H2-01 a H2-04 · Las reglas de validación, sin base de datos.

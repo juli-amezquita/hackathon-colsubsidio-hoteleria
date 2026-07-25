@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 
+import { DespachoModule } from './despacho/despacho.module';
 import { AuditoriaModule } from './modules/auditoria/auditoria.module';
 import { CapturaModule } from './modules/captura/captura.module';
 import { CatalogoModule } from './modules/catalogo/catalogo.module';
@@ -24,6 +25,9 @@ import { ProveedoresModule } from './proveedores/proveedores.module';
     ConsolidacionModule,
     AuditoriaModule,
     IntegracionModule,
+    // Arranca el despachador del outbox: sin él los eventos se escriben y
+    // nadie los consume (Principio IV).
+    DespachoModule,
   ],
 })
 export class AppModule {}

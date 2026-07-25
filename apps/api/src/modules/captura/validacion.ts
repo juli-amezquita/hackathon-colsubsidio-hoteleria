@@ -1,3 +1,5 @@
+import { dentroDeTolerancia } from '../../platform/numeros/decimal';
+
 /**
  * H2-01 a H2-04 · Las reglas de validación.
  *
@@ -108,55 +110,4 @@ export function validar(ctx: ContextoValidacion): Resultado {
     toleranciaAplicada: tolerancia,
     esAlerta: !dentro,
   };
-}
-
-/** Escalas de las columnas: `numeric(14,3)` y `numeric(6,4)`. */
-const ESCALA_CANTIDAD = 3;
-const ESCALA_TOLERANCIA = 4;
-
-/**
- * `|contado − esperado| ≤ |esperado| × tolerancia`, en aritmética exacta.
- *
- * Todo pasa por `BigInt` sobre los decimales sin convertir a `number` en ningún
- * punto. No es purismo: el caso "diferencia exactamente igual al límite" es un
- * edge case explícito de la especificación y debe caer DENTRO. En coma flotante
- * ese caso decide por el último bit del mantisa, y decidiría distinto según el
- * artículo. Aquí `≤` significa `≤`.
- *
- * El valor absoluto del esperado importa: el archivo real del cliente trae 79
- * saldos negativos. Con un esperado negativo, un `esperado × tolerancia` sin
- * abs daría un límite negativo y ninguna diferencia cabría jamás.
- */
-export function dentroDeTolerancia(contado: string, esperado: string, tolerancia: string): boolean {
-  const c = aEntero(contado, ESCALA_CANTIDAD);
-  const e = aEntero(esperado, ESCALA_CANTIDAD);
-  const t = aEntero(tolerancia, ESCALA_TOLERANCIA);
-
-  const diferencia = abs(c - e);
-  const limite = abs(e) * t;
-
-  // Se multiplica en vez de dividir: dividir truncaría y movería el límite.
-  return diferencia * 10n ** BigInt(ESCALA_TOLERANCIA) <= limite;
-}
-
-const abs = (v: bigint): bigint => (v < 0n ? -v : v);
-
-/**
- * Decimal en texto → entero escalado. `"12.5"` con escala 3 → `12500n`.
- *
- * Postgres devuelve `numeric` como cadena precisamente para no perder dígitos
- * en el camino. Convertirla a `number` para volver a escalarla desharía esa
- * garantía en la primera línea.
- */
-export function aEntero(valor: string, escala: number): bigint {
-  const limpio = valor.trim();
-  const negativo = limpio.startsWith('-');
-  const [entera = '0', decimal = ''] = limpio.replace(/^[+-]/, '').split('.');
-
-  const ajustada = decimal.length > escala
-    ? decimal.slice(0, escala) // Postgres ya redondeó a la escala de la columna.
-    : decimal.padEnd(escala, '0');
-
-  const magnitud = BigInt(entera || '0') * 10n ** BigInt(escala) + BigInt(ajustada || '0');
-  return negativo ? -magnitud : magnitud;
 }

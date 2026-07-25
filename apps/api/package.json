@@ -11,7 +11,8 @@
     "db:migrate": "tsx scripts/migrar.ts up",
     "db:rollback": "tsx scripts/migrar.ts down",
     "db:reset": "tsx scripts/migrar.ts reset && tsx scripts/semillas.ts",
-    "db:seed": "tsx scripts/semillas.ts"
+    "db:seed": "tsx scripts/semillas.ts",
+    "reconstruir": "tsx scripts/reconstruir.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",

@@ -152,16 +152,16 @@ Cada slice atraviesa datos → dominio → API → UI → pruebas, y termina en 
 
 ### Slice 3 — Consolidación contra el saldo esperado (P3)
 
-| # | Tarea |
-|---|---|
-| H3-01 | Dominio `consolidacion` como consumidor de `RondaCerrada` |
-| H3-02 | Regla D5: conciliado ⟺ el conteo ciego coincide con el saldo esperado dentro de tolerancia. **Una ronda basta** |
-| H3-03 | Clasificación de auditables: discrepancia · contradicción entre rondas · sin cobertura · sin saldo esperado · fantasma |
-| H3-04 | Restricción de base `conciliado_exige_conteo_afirmado` + `valor_final_con_origen` |
-| H3-05 | Proyección `articulo_consolidado` + comando de reconstrucción desde el libro |
-| H3-06 | Bloqueo del cierre de inventario sin **al menos una** ronda cerrada |
-| H3-07 | Regla conservadora (FR-3.10): si **cualquier** ronda produjo diferencia, el artículo es auditable |
-| H3-08 | Test E4: una ronda que concilia · discrepancia · dos rondas que se contradicen · `no_contado` como ausencia de afirmación |
+| # | Tarea | Estado |
+|---|---|---|
+| H3-01 | Dominio `consolidacion` como consumidor de `RondaCerrada` | ✅ consumidor real de `RondaCerrada`; el despachador ya arranca con la app |
+| H3-02 | Regla D5: conciliado ⟺ el conteo ciego coincide con el saldo esperado dentro de tolerancia. **Una ronda basta** | ✅ una ronda basta; probado con una y con dos |
+| H3-03 | Clasificación de auditables: discrepancia · contradicción entre rondas · sin cobertura · sin saldo esperado · fantasma | ✅ los 4 motivos de artículo + precedencia documentada |
+| H3-04 | Restricción de base `conciliado_exige_conteo_afirmado` + `valor_final_con_origen` | ✅ ya en 0007; ahora con código que las respeta |
+| H3-05 | Proyección `articulo_consolidado` + comando de reconstrucción desde el libro | ✅ `pnpm reconstruir`; prueba que borra la proyección y la regenera igual |
+| H3-06 | Bloqueo del cierre de inventario sin **al menos una** ronda cerrada | ✅ `verificarCierrePosible`: sin ronda cerrada no hay cierre |
+| H3-07 | Regla conservadora (FR-3.10): si **cualquier** ronda produjo diferencia, el artículo es auditable | ✅ una ronda discrepante arrastra a las que coincidieron |
+| H3-08 | Test E4: una ronda que concilia · discrepancia · dos rondas que se contradicen · `no_contado` como ausencia de afirmación | ✅ E4: 17 pruebas e2e + 19 unitarias de la regla |
 
 **Demostrable**: un operario cuenta la bodega y el sistema dice exactamente qué quedó resuelto y qué necesita al Auditor. Con un segundo operario, lo acumula sin pisar nada.
 
