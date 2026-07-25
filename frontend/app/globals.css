@@ -1,0 +1,95 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-soft: var(--primary-soft);
+
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-warning-soft: var(--warning-soft);
+  --color-warning-border: var(--warning-border);
+
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-success-soft: var(--success-soft);
+
+  --color-danger: var(--danger);
+  --color-danger-foreground: var(--danger-foreground);
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
+
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
+  --radius-2xl: 1.5rem;
+}
+
+:root {
+  color-scheme: light;
+
+  /* Neutrals */
+  --background: #f2f4f7;
+  --foreground: #2f2f2e;
+  --card: #ffffff;
+  --card-foreground: #2f2f2e;
+  --popover: #ffffff;
+  --popover-foreground: #2f2f2e;
+  --muted: #eef1f5;
+  --muted-foreground: #575756; /* Grafito */
+  --border: #dfe3ea;
+  --input: #cfd5df;
+  --ring: #0067b1;
+
+  /* Azul Colsubsidio #0067B1 */
+  --primary: #0067b1;
+  --primary-foreground: #ffffff;
+  --primary-soft: #e0edf7; /* azul 20% */
+
+  /* Amarillo Colsubsidio #FFD000 -> advertencia */
+  --warning: #ffd000;
+  --warning-foreground: #4a3d00;
+  --warning-soft: #fff6cc; /* amarillo 20% */
+  --warning-border: #f0c400;
+
+  /* Verde de apoyo (aprobado) */
+  --success: #1f8a4c;
+  --success-foreground: #ffffff;
+  --success-soft: #e3f3ea;
+
+  /* Grafito para estados destructivos suaves */
+  --danger: #b1341f;
+  --danger-foreground: #ffffff;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection {
+    background: var(--warning);
+    color: var(--warning-foreground);
+  }
+}
