@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { NestFactory, Reflector } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import postgres from 'postgres';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { AppModule } from '../src/app.module';
 import { SesionService } from '../src/modules/identidad/sesion.service';
@@ -26,7 +26,22 @@ import { registrarSeguridad } from '../src/platform/seguridad/registrar';
  */
 
 const URL_BD = process.env['DATABASE_URL'] ?? 'postgres://cci:cci_local@localhost:5432/cci';
-const IP = '10.0.0.7';
+
+/**
+ * Una IP por prueba.
+ *
+ * El límite de tasa es de 300 peticiones por minuto y por IP — correcto para un
+ * operario, que genera unas cuatro—. Una suite entera contra el mismo proceso
+ * no es ese escenario: se agotaría el cupo a sí misma y las pruebas fallarían
+ * por un 429 que en producción nadie vería. Cada prueba estrena IP, que además
+ * es lo que pasa de verdad: son dispositivos distintos.
+ */
+let ip = '';
+let contador = 0;
+beforeEach(() => {
+  contador += 1;
+  ip = `10.6.${Math.floor(contador / 250)}.${contador % 250}`;
+});
 
 describe('Slice 6 · continuidad ante pérdida de red', () => {
   let app: NestFastifyApplication;
@@ -39,7 +54,7 @@ describe('Slice 6 · continuidad ante pérdida de red', () => {
     app.getHttpAdapter().getInstance().inject({
       ...opciones,
       headers: { cookie, 'content-type': 'application/json' },
-      remoteAddress: IP,
+      remoteAddress: ip,
     } as never);
 
   beforeAll(async () => {
@@ -57,7 +72,7 @@ describe('Slice 6 · continuidad ante pérdida de red', () => {
       method: 'POST',
       url: '/sesion',
       payload: { usuario: '1000000001', password: 'Inventario2026*' },
-      remoteAddress: IP,
+      remoteAddress: '10.6.0.0',
     } as never);
     const bruto = login.headers['set-cookie'];
     cookie = (Array.isArray(bruto) ? bruto[0]! : String(bruto)).split(';')[0]!;

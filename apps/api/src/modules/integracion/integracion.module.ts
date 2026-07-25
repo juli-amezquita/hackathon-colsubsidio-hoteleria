@@ -1,13 +1,26 @@
 import { Module } from '@nestjs/common';
 
+import { config } from '../../config';
+import { ErpOracle } from '../../proveedores/erp/oracle';
+import { PUERTO_ERP } from '../../proveedores/erp/puerto';
+import { ErpSimulado } from '../../proveedores/erp/simulado';
+import { IntegracionController } from './integracion.controller';
+import { IntegracionService } from './integracion.service';
+
 /**
  * Dominio `integracion` — frontera dura (Principio III).
  *
- * Ningún otro módulo puede importar rutas internas de este ni tocar sus tablas.
- * La comunicación es por interfaz publicada (`platform/dominio`) o por evento.
- * La regla de lint `no-restricted-imports` lo verifica en cada build (S-09).
- *
- * Vacío en la Fase 1: el andamiaje existe, la lógica llega en su slice.
+ * El adaptador del ERP se elige en el arranque y siempre hay alternativa
+ * (Restricción 5). El simulado no es un maniquí: reconoce referencias
+ * repetidas y responde igual, que es lo que hace honesta la prueba de que un
+ * reenvío no duplica.
  */
-@Module({})
+@Module({
+  controllers: [IntegracionController],
+  providers: [
+    IntegracionService,
+    { provide: PUERTO_ERP, useClass: config().PROVEEDOR_ERP === 'oracle' ? ErpOracle : ErpSimulado },
+  ],
+  exports: [IntegracionService],
+})
 export class IntegracionModule {}

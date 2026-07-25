@@ -33,6 +33,10 @@ const EsquemaEntorno = z.object({
   BASE_URL_LLM: z.string().optional(),
 
   PROVEEDOR_ERP: z.enum(['simulado', 'oracle']).default('simulado'),
+  /** Oracle Fusion Cloud Inventory Management (SPEC §6). Sin verificar. */
+  ERP_BASE_URL: z.string().url().optional(),
+  ERP_USUARIO: z.string().optional(),
+  ERP_PASSWORD: z.string().optional(),
 
   OTEL_EXPORTER_OTLP_ENDPOINT: z.string().optional(),
   OTEL_SERVICE_NAME: z.string().default('cci-api'),

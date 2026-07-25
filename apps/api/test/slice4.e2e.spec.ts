@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { NestFactory, Reflector } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import postgres from 'postgres';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { AppModule } from '../src/app.module';
 import { DespachadorService } from '../src/despacho/despacho.module';
@@ -23,6 +23,22 @@ import { registrarSeguridad } from '../src/platform/seguridad/registrar';
 
 const URL_BD = process.env['DATABASE_URL'] ?? 'postgres://cci:cci_local@localhost:5432/cci';
 
+/**
+ * Una IP por prueba.
+ *
+ * El límite de tasa es de 300 peticiones por minuto y por IP — correcto para un
+ * operario, que genera unas cuatro—. Una suite entera contra el mismo proceso
+ * no es ese escenario: se agotaría el cupo a sí misma y las pruebas fallarían
+ * por un 429 que en producción nadie vería. Cada prueba estrena IP, que además
+ * es lo que pasa de verdad: son dispositivos distintos.
+ */
+let ip = '';
+let contador = 0;
+beforeEach(() => {
+  contador += 1;
+  ip = `10.4.${Math.floor(contador / 250)}.${contador % 250}`;
+});
+
 describe('Slice 4 · reconteo del Auditor', () => {
   let app: NestFastifyApplication;
   let sql: postgres.Sql;
@@ -38,7 +54,7 @@ describe('Slice 4 · reconteo del Auditor', () => {
       headers: { cookie, 'content-type': 'application/json' },
       // El límite de tasa es por IP y las suites corren en paralelo: sin una
       // IP propia por archivo, se consumen el cupo entre ellas.
-      remoteAddress: '10.0.0.4',
+      remoteAddress: ip,
     } as never);
 
   const entrar = async (documento: string): Promise<string> => {
@@ -46,7 +62,7 @@ describe('Slice 4 · reconteo del Auditor', () => {
       method: 'POST',
       url: '/sesion',
       payload: { usuario: documento, password: 'Inventario2026*' },
-      remoteAddress: '10.0.0.4',
+      remoteAddress: '10.4.0.0',
     });
     const bruto = r.headers['set-cookie'];
     return (Array.isArray(bruto) ? bruto[0]! : String(bruto)).split(';')[0]!;

@@ -183,6 +183,13 @@ esto donde el backend no puede ayudarte.
 duplicado; cerrar el navegador a mitad y volver a entrar deja al operario en el
 ítem siguiente; y una alerta diferida aparece en pantalla sin que él la busque.
 
+## Un detalle que cuesta media hora encontrar
+
+`POST /integracion/bodegas/:id/cierre` y `POST .../envio` **no llevan cuerpo**.
+No les pongas `content-type: application/json` sin body: Fastify responde 400
+—"Body cannot be empty"— y parece un fallo del servidor. O mandas cuerpo, o no
+mandas la cabecera.
+
 ## Lo que el backend ya te da resuelto
 
 | | |

@@ -204,14 +204,14 @@ Cada slice atraviesa datos → dominio → API → UI → pruebas, y termina en 
 
 ### Slice 7 — Salida e integración (P7)
 
-| # | Tarea |
-|---|---|
-| H7-01 | Exportación CSV y XLSX **en servidor** (Principio I) |
-| H7-02 | Consolidado con valor final, origen y código de razón por artículo |
-| H7-03 | `PuertoInventarioERP` + adaptador simulado + adaptador Oracle Fusion |
-| H7-04 | Idempotencia del envío por referencia única |
-| H7-05 | Constancia auditable de qué salió, cuándo y por quién |
-| H7-06 | Bloqueo de exportación definitiva con auditables pendientes |
+| # | Tarea | Estado |
+|---|---|---|
+| H7-01 | Exportación CSV y XLSX **en servidor** (Principio I) | ✅ CSV con BOM y `;` (Excel en español) + XLSX, ambos en servidor |
+| H7-02 | Consolidado con valor final, origen y código de razón por artículo | ✅ valor final, origen y causa por artículo; códigos traducidos |
+| H7-03 | `PuertoInventarioERP` + adaptador simulado + adaptador Oracle Fusion | ✅ puerto + simulado idempotente + adaptador Oracle **sin verificar** |
+| H7-04 | Idempotencia del envío por referencia única | ✅ referencia derivada del hash del consolidado avalado |
+| H7-05 | Constancia auditable de qué salió, cuándo y por quién | ✅ `constancia_salida` por descarga y por envío, con autor |
+| H7-06 | Bloqueo de exportación definitiva con auditables pendientes | ✅ `AUDITABLES_PENDIENTES`; el preliminar sí se descarga y va marcado |
 
 ### Slice 8 — Administración de mermas (P8)
 
