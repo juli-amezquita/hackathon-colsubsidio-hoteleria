@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Arranque del backend (D-25). Amazon Linux 2023 sobre Graviton (arm64).
+#
+# La configuración se lee de SSM Parameter Store en cada despliegue: no hay
+# credenciales en la imagen, ni en el user_data, ni en un .env del repositorio
+# (Principio V).
+
+dnf update -y
+dnf install -y docker jq
+systemctl enable --now docker
+
+mkdir -p /usr/local/lib/docker/cli-plugins
+curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-aarch64" \
+  -o /usr/local/lib/docker/cli-plugins/docker-compose
+chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+
+install -d -m 0750 /opt/cci
+
+# --------------------------------------------------------------------------
+# Script de despliegue. Se ejecuta al arrancar y en cada versión nueva:
+#   aws ssm send-command --document-name AWS-RunShellScript \
+#     --targets Key=instanceids,Values=<id> \
+#     --parameters commands='/opt/cci/desplegar.sh'
+# --------------------------------------------------------------------------
+cat > /opt/cci/desplegar.sh <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+
+REGION="__REGION__"
+PREFIJO="__PREFIJO__"
+BUCKET="__BUCKET__"
+
+# Todo lo que ocurra aquí queda en el log y SIEMPRE se sube a S3, falle o no.
+# Sin esto, un despliegue roto obliga a entrar a la máquina para saber por qué,
+# y entrar a la máquina no siempre es posible.
+LOG=/var/log/cci-despliegue.log
+exec > >(tee -a "$LOG") 2>&1
+subir_log() {
+  aws s3 cp "$LOG" "s3://$BUCKET/despliegue/$(date +%Y%m%dT%H%M%S)-$(hostname).log" \
+    --region "$REGION" >/dev/null 2>&1 || true
+}
+trap subir_log EXIT
+
+echo "=== despliegue $(date -Is) ==="
+
+# Nunca `set -x` aquí: filtraría secretos al log de consola de la instancia.
+aws ssm get-parameters-by-path --path "$PREFIJO" --with-decryption --recursive \
+  --region "$REGION" --query "Parameters[].{n:Name,v:Value}" --output json \
+  | jq -r '.[] | "\(.n | split("/") | last)=\(.v)"' > /opt/cci/.env
+chmod 0600 /opt/cci/.env
+
+cat >> /opt/cci/.env <<EOF
+NODE_ENV=production
+API_PORT=3000
+OTEL_SERVICE_NAME=cci-api-__ENTORNO__
+EOF
+
+IMAGEN=$(grep '^IMAGEN_API=' /opt/cci/.env | cut -d= -f2-)
+if [ -z "$IMAGEN" ] || [ "$IMAGEN" = "PENDIENTE" ]; then
+  echo "IMAGEN_API sin definir en SSM. Nada que desplegar." >&2
+  exit 1
+fi
+
+REGISTRO="$${IMAGEN%%/*}"
+aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$REGISTRO"
+docker pull "$IMAGEN"
+
+# Las migraciones corren ANTES de levantar la API, desde dentro de la VPC:
+# la base no es alcanzable desde fuera. Si fallan, no se despliega nada.
+docker run --rm --env-file /opt/cci/.env "$IMAGEN" node dist/scripts/migrar.js up
+
+# Semillas desde el inventario del cliente. Idempotente: cada INSERT lleva
+# ON CONFLICT DO NOTHING, así que repetirlo no pisa nada de lo ya cargado.
+docker run --rm --env-file /opt/cci/.env "$IMAGEN" node dist/scripts/semillas.js
+
+cat > /opt/cci/docker-compose.yml <<EOF
+services:
+  api:
+    image: $IMAGEN
+    restart: always
+    env_file: /opt/cci/.env
+    ports: ['3000:3000']
+    logging:
+      driver: json-file
+      options: { max-size: '20m', max-file: '5' }
+    healthcheck:
+      test: ['CMD','node','-e',"fetch('http://localhost:3000/salud').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 20s
+EOF
+
+cd /opt/cci
+docker compose up -d --remove-orphans
+docker image prune -f
+echo "Desplegado: $IMAGEN"
+SCRIPT
+
+sed -i "s|__REGION__|${region}|g; s|__PREFIJO__|${prefijo_ssm}|g; s|__ENTORNO__|${entorno}|g; s|__BUCKET__|${bucket}|g" /opt/cci/desplegar.sh
+chmod 0750 /opt/cci/desplegar.sh
+
+# --------------------------------------------------------------------------
+# Servicio: vuelve a desplegar al reiniciar. Un `reboot` no deja la API abajo.
+# --------------------------------------------------------------------------
+cat > /etc/systemd/system/cci.service <<'UNIT'
+[Unit]
+Description=Captura Inteligente de Inventarios
+Requires=docker.service
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/cci/desplegar.sh
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable cci.service
+
+# El primer arranque falla a propósito si IMAGEN_API todavía no está en SSM.
+# No es un error: es que aún no se ha publicado ninguna versión.
+systemctl start cci.service || echo "Sin imagen publicada todavía" > /opt/cci/ESTADO

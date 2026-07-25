@@ -1,0 +1,12 @@
+{"Version":"2012-10-17","Statement":[
+{"Sid":"Infra","Effect":"Allow","Action":["ec2:*","rds:*","elasticache:*","elasticloadbalancing:*","autoscaling:*","ecr:*","cloudwatch:*"],"Resource":"*","Condition":{"StringEquals":{"aws:RequestedRegion":"us-east-1"}}},
+{"Sid":"Cdn","Effect":"Allow","Action":"cloudfront:*","Resource":"*"},
+{"Sid":"S3","Effect":"Allow","Action":"s3:*","Resource":["arn:aws:s3:::cci-*","arn:aws:s3:::cci-*/*"]},
+{"Sid":"SsmParametros","Effect":"Allow","Action":"ssm:*","Resource":"arn:aws:ssm:us-east-1:292210043817:parameter/cci/*"},
+{"Sid":"SsmOperacion","Effect":"Allow","Action":["ssm:DescribeParameters","ssm:SendCommand","ssm:GetCommandInvocation","ssm:StartSession","ssm:TerminateSession","ssm:DescribeInstanceInformation"],"Resource":"*"},
+{"Sid":"Kms","Effect":"Allow","Action":["kms:Encrypt","kms:Decrypt","kms:DescribeKey","kms:GenerateDataKey"],"Resource":"*"},
+{"Sid":"Lectura","Effect":"Allow","Action":["sts:GetCallerIdentity","iam:ListRoles","iam:ListInstanceProfiles"],"Resource":"*"},
+{"Sid":"IamProyecto","Effect":"Allow","Action":["iam:CreateRole","iam:DeleteRole","iam:GetRole","iam:UpdateRole","iam:TagRole","iam:UntagRole","iam:*RolePolic*","iam:*InstanceProfile*"],"Resource":["arn:aws:iam::292210043817:role/cci-*","arn:aws:iam::292210043817:instance-profile/cci-*"]},
+{"Sid":"PassRoleSoloAEc2","Effect":"Allow","Action":"iam:PassRole","Resource":"arn:aws:iam::292210043817:role/cci-*","Condition":{"StringEquals":{"iam:PassedToService":"ec2.amazonaws.com"}}},
+{"Sid":"RolesDeServicio","Effect":"Allow","Action":"iam:CreateServiceLinkedRole","Resource":"*","Condition":{"StringEquals":{"iam:AWSServiceName":["autoscaling.amazonaws.com","elasticache.amazonaws.com","rds.amazonaws.com","elasticloadbalancing.amazonaws.com"]}}},
+{"Sid":"NoTocarIdentidades","Effect":"Deny","Action":["iam:*User*","iam:*AccessKey*","iam:*LoginProfile*","organizations:*","account:*"],"Resource":"*"}]}

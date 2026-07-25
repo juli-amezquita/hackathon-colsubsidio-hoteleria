@@ -1,0 +1,663 @@
+openapi: 3.1.0
+info:
+  title: Captura Inteligente de Inventarios — API
+  version: 0.1.0
+  description: |
+    Contrato derivado de los esquemas Zod en `packages/contracts` (D-22).
+    Este documento se GENERA; no se edita a mano.
+
+    Dos invariantes gobiernan el contrato:
+    - **El saldo esperado nunca aparece en una respuesta dirigida a rol Operador**, ni directa
+      ni derivable (FR-1.18, SC-1.3). Las alertas de discrepancia no exponen magnitud.
+    - **Nada se actualiza.** No existe PUT ni PATCH sobre el libro; una corrección es un POST
+      que añade un registro con mayor secuencia (D2, FR-1.13).
+
+    Autenticación por cookie de sesión `httpOnly`; el servidor no guarda estado (D-20).
+
+servers:
+  - url: https://api.inventarios.example/v1
+
+security:
+  - sesionCookie: []
+
+tags:
+  - name: identidad
+  - name: captura
+  - name: voz
+  - name: consolidacion
+  - name: auditoria
+  - name: integracion
+  - name: administracion
+
+paths:
+  /sesion:
+    post:
+      tags: [identidad]
+      summary: Autenticar y abrir sesión
+      description: El rol se deduce de la base de datos. El cliente NO puede proponerlo (FR-1.2).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [usuario, contrasena]
+              properties:
+                usuario: { type: string, maxLength: 100 }
+                contrasena: { type: string, format: password, maxLength: 200 }
+      responses:
+        '200':
+          description: Sesión abierta; cookie httpOnly emitida
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [usuarioId, nombre, rol, bodegas, referenciaTiempoServidor]
+                properties:
+                  usuarioId: { type: string, format: uuid }
+                  nombre: { type: string }
+                  rol: { $ref: '#/components/schemas/Rol' }
+                  bodegas:
+                    type: array
+                    items: { $ref: '#/components/schemas/Bodega' }
+                  referenciaTiempoServidor:
+                    type: string
+                    format: date-time
+                    description: Ancla para el reloj del cliente (D-16, FR-6.8).
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '429': { $ref: '#/components/responses/DemasiadasPeticiones' }
+    delete:
+      tags: [identidad]
+      summary: Cerrar sesión
+      responses:
+        '204': { description: Sesión cerrada }
+
+  /rondas:
+    post:
+      tags: [captura]
+      summary: Abrir una ronda de conteo
+      description: Crea una ronda propia del operador. No altera ninguna otra ronda (FR-1.5).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bodegaId, claveIdempotencia, desfaseRelojMs]
+              properties:
+                bodegaId: { type: string, format: uuid }
+                claveIdempotencia: { type: string, format: uuid }
+                desfaseRelojMs: { type: integer }
+      responses:
+        '201':
+          description: Ronda abierta
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ronda' }
+        '403': { $ref: '#/components/responses/Prohibido' }
+        '409': { $ref: '#/components/responses/Conflicto' }
+
+  /rondas/{rondaId}/catalogo:
+    get:
+      tags: [captura]
+      summary: Catálogo de referencia de la bodega
+      description: |
+        Catálogo de artículos de la bodega. **No es una lista dirigida**: el Operador dicta lo que
+        ve (D7), no sigue un orden propuesto. Se usa para el cuadre de cierre, para la
+        búsqueda manual y como caché local de la resolución de nombres.
+        **No incluye el saldo esperado** — ni el valor, ni un rango, ni nada que permita inferirlo.
+      parameters:
+        - { name: rondaId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limite, in: query, schema: { type: integer, default: 200, maximum: 500 } }
+      responses:
+        '200':
+          description: Página del catálogo de la bodega
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ArticuloDeTrabajo' }
+                  siguienteCursor: { type: string, nullable: true }
+
+  /rondas/{rondaId}/resolucion-articulo:
+    post:
+      tags: [captura]
+      summary: Resolver el nombre dictado contra el catálogo
+      description: |
+        Ruta caliente de cada turno (D-05, D-19). Recibe el texto del nombre tal como lo
+        pronunció el Operador y lo resuelve por `pg_trgm` sobre nombres y alias de la bodega.
+
+        Devuelve `resuelto` cuando el mejor candidato supera el umbral de aceptación **y** el
+        margen contra el segundo es suficiente. En cualquier otro caso devuelve `candidatos`
+        para que el Operador escoja tocando la pantalla: **el sistema nunca elige en caso de
+        duda** (FR-1.11, FR-1.27).
+
+        **No incluye el saldo esperado** de ningún candidato.
+      parameters:
+        - { name: rondaId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [textoDictado]
+              properties:
+                textoDictado: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        '200':
+          description: Resolución del nombre
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [estado]
+                properties:
+                  estado: { type: string, enum: [resuelto, candidatos, sin_coincidencia] }
+                  articulo:
+                    allOf:
+                      - $ref: '#/components/schemas/ArticuloDeTrabajo'
+                    nullable: true
+                    description: Presente solo si estado = resuelto.
+                  origenNombre:
+                    type: string
+                    nullable: true
+                    enum: [exacto, similitud, alias]
+                  candidatos:
+                    type: array
+                    description: Presente si estado = candidatos. Ordenados por puntaje descendente.
+                    items:
+                      type: object
+                      required: [articulo, puntaje]
+                      properties:
+                        articulo: { $ref: '#/components/schemas/ArticuloDeTrabajo' }
+                        puntaje: { type: number, minimum: 0, maximum: 1 }
+        '422': { $ref: '#/components/responses/EntradaInvalida' }
+
+  /rondas/{rondaId}/registros:
+    post:
+      tags: [captura]
+      summary: Registrar el conteo de un artículo
+      description: |
+        Append-only. Registrar dos veces el mismo artículo en la ronda **no suma**: añade un
+        registro con mayor secuencia que supersede al anterior, y exige `confirmaCorreccion`
+        (D4, FR-1.14). Deduplicación por `claveIdempotencia` (R2): reenviar es seguro.
+      parameters:
+        - { name: rondaId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegistroEntrada' }
+      responses:
+        '201':
+          description: Registro aceptado. La validación llega por separado.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RegistroAceptado' }
+        '200':
+          description: Ya existía un registro con esa clave de idempotencia. No se duplicó.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RegistroAceptado' }
+        '409':
+          description: El artículo ya fue contado en esta ronda y falta `confirmaCorreccion`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422': { $ref: '#/components/responses/EntradaInvalida' }
+
+  /rondas/{rondaId}/validaciones:
+    get:
+      tags: [captura]
+      summary: Consultar validaciones resueltas por el servidor
+      description: |
+        Sondeo de los resultados de validación de registros ya enviados (FR-6.7).
+        La alerta indica QUE hay discrepancia; **nunca cuánta ni contra qué saldo** (FR-2.2).
+      parameters:
+        - { name: rondaId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: desde, in: query, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: Validaciones disponibles
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ResultadoValidacion' }
+
+  /rondas/{rondaId}/productos-fantasma:
+    post:
+      tags: [captura]
+      summary: Registrar un artículo que no está en el catálogo
+      parameters:
+        - { name: rondaId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [descripcion, unidadObservada, cantidad, claveIdempotencia]
+              properties:
+                descripcion:
+                  type: string
+                  minLength: 20
+                  description: Descripción detallada. Se rechaza lo genérico (FR-5.2).
+                unidadObservada: { type: string }
+                cantidad: { type: number, minimum: 0 }
+                claveIdempotencia: { type: string, format: uuid }
+      responses:
+        '201': { description: Hallazgo registrado; escalará al Auditor }
+        '422': { $ref: '#/components/responses/EntradaInvalida' }
+
+  /rondas/{rondaId}/cuadre-cierre:
+    get:
+      tags: [captura]
+      summary: Artículos sin resolver antes de cerrar la ronda
+      description: Lista lo no registrado, para decidir entre contado en cero y no contado (D1, FR-1.15).
+      parameters:
+        - { name: rondaId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Pendientes de decisión
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ArticuloDeTrabajo' }
+
+  /rondas/{rondaId}/cierre:
+    post:
+      tags: [captura]
+      summary: Cerrar la ronda
+      description: |
+        Falla si queda un artículo sin estado explícito (FR-1.15) o una alerta sin resolver
+        (FR-2.8). Tras el cierre, los registros de la ronda son inmodificables (FR-1.17).
+      parameters:
+        - { name: rondaId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '201': { description: Ronda cerrada }
+        '409':
+          description: Quedan pendientes
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /voz/token:
+    post:
+      tags: [voz]
+      summary: Emitir token efímero de transcripción
+      description: |
+        Token de un solo uso y vida corta para que el dispositivo hable directo con el proveedor
+        de STT (D-07 opción A). Nuestra credencial permanente nunca sale del servidor.
+      responses:
+        '201':
+          description: Token emitido
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, expiraEn]
+                properties:
+                  token: { type: string }
+                  expiraEn: { type: string, format: date-time }
+        '429': { $ref: '#/components/responses/DemasiadasPeticiones' }
+
+  /bodegas/{bodegaId}/consolidado:
+    get:
+      tags: [consolidacion]
+      summary: Consolidado de todas las rondas de una bodega
+      description: |
+        Acumula las rondas cerradas preservando qué contó cada persona (FR-3.1). No reconcilia:
+        expone las diferencias, incluidas las que hay entre rondas (FR-3.4). Solo Auditor y Admin.
+      parameters:
+        - { name: bodegaId, in: path, required: true, schema: { type: string, format: uuid } }
+        - name: clasificacion
+          in: query
+          schema: { type: string, enum: [conciliado, auditable] }
+      responses:
+        '200':
+          description: Consolidado
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ArticuloConsolidado' }
+        '403': { $ref: '#/components/responses/Prohibido' }
+
+  /bodegas/{bodegaId}/auditables:
+    get:
+      tags: [auditoria]
+      summary: Bandeja del Auditor
+      description: Devuelve exclusivamente los ítems auditables (FR-4.1). Nunca el inventario completo.
+      parameters:
+        - { name: bodegaId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Ítems que requieren decisión
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ItemAuditable' }
+        '403': { $ref: '#/components/responses/Prohibido' }
+
+  /auditables/{itemId}/reconteo:
+    post:
+      tags: [auditoria]
+      summary: Registrar el reconteo del Auditor
+      description: |
+        Exige código de razón de catálogo controlado (FR-4.4, R4). El valor del Auditor
+        prevalece (FR-4.5). Append-only: una corrección añade, no reemplaza.
+      parameters:
+        - { name: itemId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cantidad, unidadId, codigoRazonId, modoCaptura, claveIdempotencia]
+              properties:
+                cantidad: { type: number, minimum: 0 }
+                unidadId: { type: string, format: uuid }
+                codigoRazonId: { type: string, format: uuid }
+                modoCaptura: { $ref: '#/components/schemas/ModoCaptura' }
+                claveIdempotencia: { type: string, format: uuid }
+      responses:
+        '201': { description: Reconteo registrado }
+        '422': { $ref: '#/components/responses/EntradaInvalida' }
+
+  /bodegas/{bodegaId}/cierre-inventario:
+    post:
+      tags: [auditoria]
+      summary: Cerrar el inventario de la bodega
+      description: |
+        Falla si no hay al menos una ronda cerrada (FR-3.7) o si queda algún ítem
+        auditable sin resolver (FR-4.8).
+      parameters:
+        - { name: bodegaId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '201': { description: Inventario cerrado }
+        '409':
+          description: Requisitos de cierre incumplidos
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /bodegas/{bodegaId}/exportacion:
+    get:
+      tags: [integracion]
+      summary: Descargar el consolidado final
+      parameters:
+        - { name: bodegaId, in: path, required: true, schema: { type: string, format: uuid } }
+        - name: formato
+          in: query
+          required: true
+          schema: { type: string, enum: [csv, xlsx] }
+      responses:
+        '200':
+          description: Archivo generado en servidor (D-12 research)
+          content:
+            text/csv: { schema: { type: string } }
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: { type: string, format: binary }
+        '409': { description: Hay ítems auditables sin resolver (FR-7.6) }
+        '403': { $ref: '#/components/responses/Prohibido' }
+
+  /bodegas/{bodegaId}/envio-erp:
+    post:
+      tags: [integracion]
+      summary: Enviar el resultado al sistema central
+      description: Idempotente por referencia de envío. Un reintento no duplica movimientos (FR-7.4).
+      parameters:
+        - { name: bodegaId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [referenciaEnvio]
+              properties:
+                referenciaEnvio: { type: string }
+      responses:
+        '202': { description: Envío encolado }
+        '409': { description: Ya enviado con esa referencia }
+
+  /configuracion/mermas:
+    get:
+      tags: [administracion]
+      summary: Consultar tolerancias de merma vigentes
+      responses:
+        '200':
+          description: Tolerancias
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ToleranciaMerma' }
+        '403': { $ref: '#/components/responses/Prohibido' }
+    post:
+      tags: [administracion]
+      summary: Modificar una tolerancia de merma
+      description: |
+        Solo rol Administrador (FR-8.1). No revalúa conteos ya registrados (FR-8.2):
+        cada registro congeló la tolerancia vigente a su momento.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [unidadId, porcentaje]
+              properties:
+                unidadId: { type: string, format: uuid }
+                porcentaje: { type: number, minimum: 0, maximum: 100 }
+      responses:
+        '201': { description: Tolerancia actualizada; queda en el historial }
+        '403': { $ref: '#/components/responses/Prohibido' }
+        '422': { $ref: '#/components/responses/EntradaInvalida' }
+
+components:
+  securitySchemes:
+    sesionCookie:
+      type: apiKey
+      in: cookie
+      name: sesion
+
+  schemas:
+    Rol:
+      type: string
+      enum: [operador, auditor, administrador]
+
+    ModoCaptura:
+      type: string
+      enum: [voz, texto]
+
+    EstadoRegistro:
+      type: string
+      enum: [contado, contado_en_cero, no_contado]
+
+    Bodega:
+      type: object
+      required: [id, nombre]
+      properties:
+        id: { type: string, format: uuid }
+        nombre: { type: string }
+
+    Ronda:
+      type: object
+      required: [id, bodegaId, operadorId, abiertaEn]
+      properties:
+        id: { type: string, format: uuid }
+        bodegaId: { type: string, format: uuid }
+        operadorId: { type: string, format: uuid }
+        abiertaEn: { type: string, format: date-time }
+
+    ArticuloDeTrabajo:
+      type: object
+      description: |
+        Artículo tal como lo ve el Operador. Deliberadamente NO contiene saldo esperado,
+        tolerancia, ni conteos previos de otras rondas (FR-1.18).
+      required: [articuloId, nombre, unidadEsperada]
+      properties:
+        articuloId: { type: string, format: uuid }
+        nombre: { type: string }
+        codigo: { type: string, nullable: true }
+        unidadEsperada: { $ref: '#/components/schemas/Unidad' }
+        orden: { type: integer }
+
+    Unidad:
+      type: object
+      required: [id, nombre, esPeso]
+      properties:
+        id: { type: string, format: uuid }
+        nombre: { type: string }
+        esPeso: { type: boolean }
+
+    RegistroEntrada:
+      type: object
+      required: [articuloId, estado, claveIdempotencia, modoCaptura, capturadoEn, origenParse]
+      properties:
+        articuloId: { type: string, format: uuid }
+        estado: { $ref: '#/components/schemas/EstadoRegistro' }
+        cantidad:
+          type: number
+          minimum: 0
+          nullable: true
+          description: Obligatorio salvo `no_contado`. Solo números exactos (FR-1.9).
+        unidadId: { type: string, format: uuid, nullable: true }
+        modoCaptura: { $ref: '#/components/schemas/ModoCaptura' }
+        origenParse: { type: string, enum: [gramatica, modelo, manual] }
+        capturadoEn:
+          type: string
+          format: date-time
+          description: Reloj del cliente anclado a la referencia del servidor (D-16).
+        claveIdempotencia: { type: string, format: uuid }
+        confirmaCorreccion:
+          type: boolean
+          default: false
+          description: Requerido si el artículo ya fue contado en esta ronda (FR-1.14).
+        confirmaPeseAAlerta:
+          type: boolean
+          default: false
+          description: El usuario confirma pese a una alerta de discrepancia (FR-2.4).
+
+    RegistroAceptado:
+      type: object
+      required: [registroId, secuencia, recibidoEn]
+      properties:
+        registroId: { type: string, format: uuid }
+        secuencia: { type: integer }
+        recibidoEn: { type: string, format: date-time }
+
+    ResultadoValidacion:
+      type: object
+      description: |
+        Resultado de la validación en servidor. En rol Operador NUNCA incluye el saldo esperado,
+        la diferencia ni la tolerancia — solo si hay alerta y de qué tipo (FR-2.2).
+      required: [registroId, resultado]
+      properties:
+        registroId: { type: string, format: uuid }
+        resultado:
+          type: string
+          enum: [aceptado, alerta_unidad, alerta_discrepancia, no_validable]
+        unidadCorrecta:
+          $ref: '#/components/schemas/Unidad'
+          description: Presente solo en `alerta_unidad` (FR-2.1).
+        exigeEvidencia: { type: boolean }
+
+    ArticuloConsolidado:
+      type: object
+      required: [articuloId, nombre, clasificacion, rondas]
+      properties:
+        articuloId: { type: string, format: uuid }
+        nombre: { type: string }
+        clasificacion: { type: string, enum: [conciliado, auditable] }
+        motivoAuditable:
+          type: string
+          nullable: true
+          enum: [discrepancia, contradiccion_entre_rondas, sin_cobertura, sin_saldo_esperado, producto_fantasma]
+        valorFinal: { type: number, nullable: true }
+        origenValor: { type: string, nullable: true, enum: [conteo_ciego, auditor] }
+        rondasAfirmando:
+          type: integer
+          description: Rondas que afirmaron una cantidad. Informativo — una sola basta para conciliar (D5).
+        rondas:
+          type: array
+          description: Detalle por ronda, sin fusionar ni recalcular (FR-3.8).
+          items:
+            type: object
+            required: [rondaId, operadorNombre, estado]
+            properties:
+              rondaId: { type: string, format: uuid }
+              operadorNombre: { type: string }
+              estado: { $ref: '#/components/schemas/EstadoRegistro' }
+              cantidad: { type: number, nullable: true }
+              capturadoEn: { type: string, format: date-time }
+
+    ItemAuditable:
+      allOf:
+        - $ref: '#/components/schemas/ArticuloConsolidado'
+        - type: object
+          properties:
+            diferenciaContraSistema:
+              type: number
+              nullable: true
+              description: Visible SOLO para rol Auditor (FR-4.2).
+            resumenArbitro:
+              type: string
+              nullable: true
+              description: Evidencia ordenada por el Árbitro. No decide (FR-3.4).
+
+    ToleranciaMerma:
+      type: object
+      required: [unidadId, porcentaje, vigenteDesde]
+      properties:
+        unidadId: { type: string, format: uuid }
+        porcentaje: { type: number }
+        vigenteDesde: { type: string, format: date-time }
+        modificadaPor: { type: string }
+
+    Error:
+      type: object
+      required: [codigo, mensaje]
+      properties:
+        codigo: { type: string }
+        mensaje: { type: string }
+        detalles: { type: object, additionalProperties: true }
+
+  responses:
+    NoAutenticado:
+      description: Sesión ausente o inválida
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Prohibido:
+      description: El rol no autoriza esta operación
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflicto:
+      description: Conflicto con el estado actual
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    EntradaInvalida:
+      description: Falló la validación de esquema
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    DemasiadasPeticiones:
+      description: Límite de tasa excedido
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }

@@ -1,0 +1,15 @@
+**/node_modules
+**/dist
+**/dev-dist
+**/coverage
+.git
+.github
+.specify
+specs
+infra
+tests
+*.md
+.env
+.env.*
+!.env.example
+**/.DS_Store

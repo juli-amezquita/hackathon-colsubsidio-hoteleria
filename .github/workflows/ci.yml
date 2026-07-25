@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# S-08 · Lo que no se verifica automáticamente, no se sostiene.
+# Una regresión FALLA LA BUILD; no genera un ticket (Principio VII).
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: cci
+          POSTGRES_PASSWORD: cci_local
+          POSTGRES_DB: cci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U cci -d cci"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://cci:cci_local@localhost:5432/cci
+      REDIS_URL: redis://localhost:6379
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Compilar contratos
+        run: pnpm --filter @cci/contracts build
+
+      - name: Tipos (strict, sin any)
+        run: pnpm typecheck
+
+      - name: Lint — incluye la frontera entre dominios (S-09)
+        run: pnpm lint
+
+      - name: Migraciones ida y vuelta
+        # Toda migración debe revertir. La que no revierte, no entra (Restricción 6).
+        run: pnpm --filter @cci/api exec tsx scripts/migrar.ts verificar
+
+      - name: Pruebas
+        run: pnpm test
+
+      - name: Semillas desde el inventario del cliente
+        run: pnpm db:migrate && pnpm db:seed
+
+      - name: Carga — 500 concurrentes, p95 < 200 ms (F-33)
+        # Los umbrales de k6 FALLAN LA BUILD; no generan un ticket.
+        run: |
+          curl -fsSL https://github.com/grafana/k6/releases/latest/download/k6-linux-amd64.tar.gz \
+            | sudo tar -xz --strip-components=1 -C /usr/local/bin --wildcards '*/k6'
+          pnpm --filter @cci/api start &
+          npx wait-on http://localhost:3000/salud -t 60000
+          k6 run tests/perf/conteo.js
+
+  infraestructura:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Formato
+        run: terraform fmt -recursive -check -diff
+        working-directory: infra/terraform
+
+      - name: Validar
+        # Sin backend: valida la sintaxis y las referencias sin tocar la cuenta.
+        run: terraform init -backend=false -input=false && terraform validate
+        working-directory: infra/terraform

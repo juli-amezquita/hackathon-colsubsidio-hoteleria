@@ -1,3 +1,44 @@
+# ---------------------------------------------------------------
+# Node / TypeScript — el stack real del proyecto
+# ---------------------------------------------------------------
+node_modules/
+.pnpm-store/
+*.tsbuildinfo
+apps/*/dist/
+packages/*/dist/
+apps/web/dev-dist/
+coverage/
+.vite/
+playwright-report/
+test-results/
+.eslintcache
+
+# Secretos y entorno — nunca al repositorio (Principio V)
+.env
+.env.*
+!.env.example
+
+# Terraform — el estado y los planes NUNCA al repositorio.
+# El .terraform.lock.hcl SÍ se commitea: fija las versiones de proveedor.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+# Los .tfvars pueden traer datos sensibles; los de entorno van explícitos.
+*.tfvars
+!infra/terraform/entornos/*.tfvars
+
+# Sistema
+.DS_Store
+
+# ---------------------------------------------------------------
+# Python (plantilla original del repositorio)
+# ---------------------------------------------------------------
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

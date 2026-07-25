@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist",
+    "sourceMap": false,
+    "declaration": false
+  },
+  // Los scripts de operación (migraciones) viajan compilados en la imagen:
+  // la base solo es alcanzable desde la VPC, así que se ejecutan desde allí.
+  "include": ["src/**/*.ts", "scripts/**/*.ts"],
+  "exclude": ["test/**/*", "**/*.spec.ts"]
+}

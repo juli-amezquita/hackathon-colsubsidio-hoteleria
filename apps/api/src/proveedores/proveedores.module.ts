@@ -1,0 +1,36 @@
+import { Module } from '@nestjs/common';
+
+import { config } from '../config';
+import { InterpretacionAnthropic } from './interpretacion/anthropic';
+import { PROVEEDOR_INTERPRETACION } from './interpretacion/proveedor';
+import { InterpretacionSimulada } from './interpretacion/simulado';
+import { DeepgramVoz } from './voz/deepgram';
+import { PROVEEDOR_VOZ } from './voz/proveedor';
+import { VozSimulada } from './voz/simulado';
+import { VozController } from './voz/voz.controller';
+
+/**
+ * Proveedores externos, todos detrás de interfaz con alternativa (Restricción 5).
+ *
+ * La elección es por configuración y en el arranque, no un `if` en la ruta
+ * caliente: así el modo simulado es indistinguible del real desde el dominio,
+ * y conmutar de proveedor no exige tocar una línea de negocio.
+ */
+@Module({
+  controllers: [VozController],
+  providers: [
+    {
+      provide: PROVEEDOR_VOZ,
+      useClass: config().PROVEEDOR_VOZ === 'deepgram' ? DeepgramVoz : VozSimulada,
+    },
+    {
+      provide: PROVEEDOR_INTERPRETACION,
+      useClass:
+        config().PROVEEDOR_INTERPRETACION === 'anthropic'
+          ? InterpretacionAnthropic
+          : InterpretacionSimulada,
+    },
+  ],
+  exports: [PROVEEDOR_VOZ, PROVEEDOR_INTERPRETACION],
+})
+export class ProveedoresModule {}

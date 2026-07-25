@@ -1,0 +1,30 @@
+{
+  "name": "captura-inventarios",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=22",
+    "pnpm": ">=10"
+  },
+  "packageManager": "pnpm@10.31.0",
+  "scripts": {
+    "dev": "pnpm --filter @cci/api dev",
+    "build": "pnpm --filter @cci/contracts build && pnpm --filter @cci/api build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "eslint .",
+    "test": "pnpm -r test",
+    "db:migrate": "pnpm --filter @cci/api db:migrate",
+    "db:rollback": "pnpm --filter @cci/api db:rollback",
+    "db:reset": "pnpm --filter @cci/api db:reset",
+    "db:verificar": "pnpm --filter @cci/api exec tsx scripts/migrar.ts verificar",
+    "verify": "pnpm build && pnpm typecheck && pnpm lint && pnpm test",
+    "db:seed": "pnpm --filter @cci/api db:seed"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.18.0",
+    "eslint": "^9.18.0",
+    "globals": "^15.14.0",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.20.0"
+  }
+}
