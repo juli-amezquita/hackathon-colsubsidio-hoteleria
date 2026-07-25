@@ -104,6 +104,19 @@ export class CapturaController {
     return this.rondas.registrarFantasma(rondaId, req.usuario!.usuarioId, entrada);
   }
 
+  /**
+   * H6-02 a H6-04 · Por dónde iba la ronda, según el servidor.
+   *
+   * El dispositivo lleva su propia cola y su propio historial; esto es la
+   * fuente de verdad para cuando esa memoria se pierde — y para enterarse de
+   * las alertas que llegaron mientras el operario ya iba en otro estante.
+   */
+  @Get(':rondaId/estado')
+  @Roles('operador')
+  estado(@Param('rondaId') rondaId: string, @Req() req: PeticionAutenticada) {
+    return this.rondas.estadoDeRonda(rondaId, req.usuario!.usuarioId);
+  }
+
   @Get(':rondaId/cuadre-cierre')
   @Roles('operador')
   cuadre(@Param('rondaId') rondaId: string, @Req() req: PeticionAutenticada) {

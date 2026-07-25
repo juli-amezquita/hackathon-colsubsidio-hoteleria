@@ -132,6 +132,57 @@ el operario intente cerrar y se lleve un 400.
 por las dos vías (corregir y sostener), y la ronda cierra tras adjuntar la
 evidencia — sin que en ninguna pantalla aparezca un número que venga del ERP.
 
+## F-35 · Sin red (nuevo, Slice 6)
+
+El backend ya hace su mitad: deduplica por tu clave, guarda todo y sabe decirte
+por dónde ibas. Lo que sigue siendo tuyo:
+
+**Escribe antes de enviar.** Genera la `claveIdempotencia` (UUID v4) y guarda el
+registro en IndexedDB **antes** de intentar el `fetch`. El envío es un reintento
+contra esa cola, con backoff. Probado del lado del servidor: 20 ítems con 10
+cortes y 8 reintentos simultáneos del mismo sobre dan una fila cada uno.
+
+**No acumules audio.** La transcripción va directo a Deepgram por WebSocket; sin
+red no hay voz. Grabar minutos para transcribir después sería peor: el operario
+no sabría hasta el final si el sistema le entendió. Sin red se dicta por teclado
+y la gramática local (`@cci/gramatica`) resuelve igual con el catálogo cacheado.
+
+**Manda el texto crudo en `textoDictado`.** Es nuevo y **importa**: el servidor
+vuelve a resolver el nombre con el catálogo vigente y, si le da otro artículo,
+marca el registro para el Auditor con las dos resoluciones. Sin ese campo el
+servidor tiene que creerle a un catálogo cacheado que puede estar viejo. Nunca
+corrige en silencio, así que mandarlo no te cambia el `articuloId`: solo evita
+que un desajuste pase inadvertido.
+
+**Retomar y refrescar:**
+
+```
+GET /rondas/:rondaId/estado
+→ { contados, total,
+    ultimos: [{ articuloId, nombre, cantidad, estado, validacion, recibidoEn }],
+    pendientesDeResolver: [{ registroId, articuloId, nombre, motivo }] }
+```
+
+- `ultimos` (3–5, el más reciente primero) es el historial permanente en
+  pantalla y el punto por donde retomar. **Úsalo al volver a entrar**: la
+  memoria del dispositivo se pierde y el operario no puede quedar adivinando.
+- `validacion` es lo que distingue *guardado* de *validado* (F-22). `null` o
+  ausente = todavía no llegó respuesta.
+- `pendientesDeResolver` son las **alertas diferidas**: llegaron mientras el
+  operario ya iba en otro estante. Muéstralas apenas aparezcan; si espera al
+  cierre, se entera con la ronda entera hecha.
+- **Sin saldos.** Esta respuesta la lee un Operador y hay una prueba que la
+  recorre valor por valor.
+
+**Almacenamiento agotado (FR-6.6).** Antes de aceptar un registro, comprueba
+cuota (`navigator.storage.estimate()`). Si no cabe, **avisa y bloquea**: nunca
+confirmes al operario algo que no puedes conservar. Es la única parte de todo
+esto donde el backend no puede ayudarte.
+
+**Se acepta cuando:** 20 ítems con 10 cortes de red dan 20 registros y ningún
+duplicado; cerrar el navegador a mitad y volver a entrar deja al operario en el
+ítem siguiente; y una alerta diferida aparece en pantalla sin que él la busque.
+
 ## Lo que el backend ya te da resuelto
 
 | | |

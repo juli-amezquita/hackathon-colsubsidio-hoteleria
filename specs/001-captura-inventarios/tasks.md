@@ -192,15 +192,15 @@ Cada slice atraviesa datos → dominio → API → UI → pruebas, y termina en 
 
 ### Slice 6 — Continuidad ante pérdida de red (P6)
 
-| # | Tarea |
-|---|---|
-| H6-01 | Cola de sincronización con reintento y backoff |
-| H6-02 | Reanudación en el ítem siguiente al último grabado |
-| H6-03 | Historial visible de los últimos 3–5 registros exitosos |
-| H6-04 | Alertas diferidas notificadas y exigidas antes del cierre (FR-6.7) |
-| H6-05 | Aviso y bloqueo si el almacenamiento local se agota (FR-6.6) |
-| H6-06 | Test E6: diez cortes, cero pérdidas, cero duplicados |
-| H6-07 | Test E8: degradación de proveedores |
+| # | Tarea | Estado |
+|---|---|---|
+| H6-01 | Cola de sincronización con reintento y backoff | ⏳ del compañero (cola en IndexedDB); servidor probado con 10 cortes |
+| H6-02 | Reanudación en el ítem siguiente al último grabado | ✅ `GET /rondas/:id/estado` con avance y últimos registros |
+| H6-03 | Historial visible de los últimos 3–5 registros exitosos | ⏳ del compañero (pantalla); el servidor sirve 3–5 más recientes |
+| H6-04 | Alertas diferidas notificadas y exigidas antes del cierre (FR-6.7) | ✅ `pendientesDeResolver` en el estado + bloqueo del cierre |
+| H6-05 | Aviso y bloqueo si el almacenamiento local se agota (FR-6.6) | ⏳ del compañero (cuota de almacenamiento; el backend no puede ayudar) |
+| H6-06 | Test E6: diez cortes, cero pérdidas, cero duplicados | ✅ E6: 20 ítems, 10 cortes, 8 reintentos simultáneos → 20 filas |
+| H6-07 | Test E8: degradación de proveedores | ✅ E8: 9 pruebas de degradación; ningún proveedor toca la validación |
 
 ### Slice 7 — Salida e integración (P7)
 

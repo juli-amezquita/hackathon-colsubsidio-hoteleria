@@ -98,6 +98,15 @@ export class RondaService {
     // E2 lo verifica recorriendo cada respuesta valor por valor.
     const ctx = await this.catalogo.contextoDeValidacion(ronda.bodega_id, entrada.articuloId);
 
+    // FR-6.9 · El servidor vuelve a resolver el nombre, con autoridad.
+    //
+    // El dispositivo pudo resolverlo sin red, contra un catálogo cacheado que
+    // quizá ya no coincide con el vigente. El servidor no le cree ni lo
+    // corrige: contrasta. Y si difiere, marca la fila — corregir en silencio
+    // dejaría al operario contando un artículo y al sistema guardando otro,
+    // sin que nadie pueda enterarse jamás.
+    const servidor = await this.reresolver(ronda.bodega_id, entrada);
+
     return conexion().begin(async (trx) => {
       let veredicto: Resultado | undefined;
 
@@ -105,7 +114,7 @@ export class RondaService {
         tabla: 'registro_conteo',
         clave: entrada.claveIdempotencia,
         insertar: async (t) => {
-          const fila = await this.insertar(t, ronda, entrada, articulo, ctx);
+          const fila = await this.insertar(t, ronda, entrada, articulo, ctx, servidor);
           if (!fila) return undefined;
           veredicto = fila.veredicto;
           return { id: fila.id, secuencia: fila.secuencia, recibido_en: fila.recibido_en };
@@ -222,6 +231,7 @@ export class RondaService {
     entrada: RegistroEntrada,
     articulo: ArticuloDeTrabajo,
     ctx: { saldoEsperado: string | null; toleranciaMerma: string | null },
+    servidor: { articuloId: string | null; discrepante: boolean },
   ): Promise<{ id: string; secuencia: number; recibido_en: Date; veredicto: Resultado } | undefined> {
     // La secuencia se calcula DENTRO de la transacción, sobre la fila máxima
     // actual. Es lo que hace que una corrección supersede en vez de sobrescribir
@@ -285,12 +295,14 @@ export class RondaService {
         (id, ronda_id, articulo_id, secuencia, estado, cantidad, unidad_id,
          saldo_esperado_congelado, tolerancia_aplicada, resultado_validacion,
          modo_captura, origen_parse, origen_nombre,
-         capturado_en, clave_idempotencia, advertido)
+         capturado_en, clave_idempotencia, advertido,
+         texto_dictado, articulo_servidor, resolucion_discrepante)
       VALUES (${randomUUID()}, ${ronda.id}, ${entrada.articuloId}, ${secuencia},
               ${entrada.estado}, ${entrada.cantidad}, ${entrada.unidadId},
               ${ctx.saldoEsperado}, ${veredicto.toleranciaAplicada}, ${veredicto.veredicto},
               ${entrada.modoCaptura}, ${entrada.origenParse}, ${entrada.origenNombre},
-              ${entrada.capturadoEn}, ${entrada.claveIdempotencia}, ${advertido})
+              ${entrada.capturadoEn}, ${entrada.claveIdempotencia}, ${advertido},
+              ${entrada.textoDictado}, ${servidor.articuloId}, ${servidor.discrepante})
       ON CONFLICT (clave_idempotencia) DO NOTHING
       RETURNING id, secuencia, recibido_en`;
 
@@ -461,6 +473,33 @@ export class RondaService {
   }
 
   /**
+   * FR-6.9 · Vuelve a resolver el nombre dictado en el servidor.
+   *
+   * Solo se pronuncia cuando está SEGURO. Si su propia resolución queda en
+   * candidatos —o no encuentra nada— no marca discrepancia: que el servidor
+   * dude no es prueba de que el dispositivo se equivocara, y marcar por dudas
+   * llenaría la bandeja del Auditor de ruido hasta volverla inservible.
+   */
+  private async reresolver(
+    bodegaId: string,
+    entrada: RegistroEntrada,
+  ): Promise<{ articuloId: string | null; discrepante: boolean }> {
+    // Sin texto no hay nada que contrastar, y la captura manual por lista no
+    // pasó por ninguna resolución: el operario tocó el artículo en pantalla.
+    if (!entrada.textoDictado || entrada.origenParse === 'manual') {
+      return { articuloId: null, discrepante: false };
+    }
+
+    const r = await this.catalogo.resolver(bodegaId, entrada.textoDictado);
+    if (r.estado !== 'resuelto' || !r.articulo) return { articuloId: null, discrepante: false };
+
+    return {
+      articuloId: r.articulo.articuloId,
+      discrepante: r.articulo.articuloId !== entrada.articuloId,
+    };
+  }
+
+  /**
    * H5-01 a H5-04 · Registra un hallazgo sin correspondencia en el catálogo.
    *
    * Va por su propia ruta y su propia tabla, no por `registro_conteo`, y eso
@@ -545,6 +584,71 @@ export class RondaService {
         candidatosDescartados: candidatos.length,
       };
     });
+  }
+
+  /**
+   * H6-02, H6-03, H6-04 · El estado de la ronda según el SERVIDOR.
+   *
+   * Existe porque el dispositivo puede perder su memoria: se apaga, se cae, se
+   * cambia por otro a media jornada. El operario vuelve a entrar y necesita
+   * saber por dónde iba sin repetir trabajo — y una herramienta que hace
+   * repetir trabajo se abandona.
+   *
+   * Trae tres cosas y cada una responde a un requisito distinto:
+   *
+   *   · `ultimos` — los últimos registros con éxito, para retomar en el
+   *     siguiente y para el historial permanente en pantalla (FR-6.3, FR-6.4).
+   *   · `pendientesDeResolver` — las alertas que llegaron DIFERIDAS, cuando el
+   *     operario ya había avanzado varios ítems (FR-6.7). Sin esto se
+   *     enteraría al intentar cerrar, con la ronda entera hecha.
+   *   · `contados` — cuántos artículos lleva, para la barra de avance.
+   */
+  async estadoDeRonda(rondaId: string, operadorId: string, ultimos = 5) {
+    const ronda = await this.rondaAbiertaDe(rondaId, operadorId);
+
+    const recientes = await conexion()<
+      { articulo_id: string; nombre: string; cantidad: string | null; estado: string; resultado_validacion: string | null; recibido_en: Date }[]
+    >`
+      SELECT v.articulo_id, a.nombre, v.cantidad, v.estado, v.resultado_validacion, v.recibido_en
+      FROM registro_vigente v
+      JOIN articulo a ON a.id = v.articulo_id
+      WHERE v.ronda_id = ${rondaId}
+      ORDER BY v.recibido_en DESC
+      LIMIT ${Math.min(Math.max(ultimos, 3), 5)}`;
+
+    const alertas = await conexion()<{ registro_id: string; articulo_id: string; nombre: string; motivo: string }[]>`
+      SELECT p.registro_id, p.articulo_id, a.nombre, p.motivo
+      FROM pendiente_de_resolver p
+      JOIN articulo a ON a.id = p.articulo_id
+      WHERE p.ronda_id = ${rondaId}
+      ORDER BY a.nombre`;
+
+    const [avance] = await conexion()<{ contados: number; total: number }[]>`
+      SELECT (SELECT count(DISTINCT articulo_id)::int FROM registro_conteo WHERE ronda_id = ${rondaId}) AS contados,
+             (SELECT count(*)::int FROM articulo WHERE bodega_id = ${ronda.bodega_id} AND activo) AS total`;
+
+    return {
+      rondaId,
+      bodegaId: ronda.bodega_id,
+      contados: avance?.contados ?? 0,
+      total: avance?.total ?? 0,
+      // ⚠️ Sin saldos ni diferencias: esto lo lee un Operador (FR-1.18).
+      ultimos: recientes.map((r) => ({
+        articuloId: r.articulo_id,
+        nombre: r.nombre,
+        cantidad: r.cantidad,
+        estado: r.estado,
+        // Lo que distingue *guardado* de *validado* en pantalla (FR-6.5).
+        validacion: r.resultado_validacion,
+        recibidoEn: r.recibido_en.toISOString(),
+      })),
+      pendientesDeResolver: alertas.map((a) => ({
+        registroId: a.registro_id,
+        articuloId: a.articulo_id,
+        nombre: a.nombre,
+        motivo: a.motivo,
+      })),
+    };
   }
 
   /** La bodega de una ronda propia. El controlador la necesita para resolver. */

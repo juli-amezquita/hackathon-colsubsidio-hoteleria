@@ -53,10 +53,11 @@ export class ConsolidacionService implements Consumidor {
         unidad_id: string | null;
         resultado_validacion: string | null;
         saldo_esperado_congelado: string | null;
+        resolucion_discrepante: boolean;
       }[]
     >`
       SELECT v.articulo_id, v.ronda_id, v.estado, v.cantidad, v.unidad_id,
-             v.resultado_validacion, v.saldo_esperado_congelado
+             v.resultado_validacion, v.saldo_esperado_congelado, v.resolucion_discrepante
       FROM registro_vigente v
       JOIN ronda r        ON r.id = v.ronda_id
       JOIN ronda_cierre rc ON rc.ronda_id = r.id
@@ -93,6 +94,7 @@ export class ConsolidacionService implements Consumidor {
         unidadId: f.unidad_id,
         resultadoValidacion: f.resultado_validacion,
         saldoEsperadoCongelado: f.saldo_esperado_congelado,
+        resolucionDiscrepante: f.resolucion_discrepante,
       });
       porArticulo.set(f.articulo_id, lista);
     }

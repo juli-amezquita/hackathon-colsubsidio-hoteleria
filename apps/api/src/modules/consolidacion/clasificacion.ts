@@ -18,7 +18,8 @@ export type MotivoAuditable =
   | 'contradiccion_entre_rondas'
   | 'sin_cobertura'
   | 'sin_saldo_esperado'
-  | 'producto_fantasma';
+  | 'producto_fantasma'
+  | 'resolucion_discrepante';
 
 /** El vigente de UNA ronda cerrada sobre UN artículo (FR-3.6). */
 export interface AfirmacionDeRonda {
@@ -29,6 +30,8 @@ export interface AfirmacionDeRonda {
   readonly unidadId: string | null;
   readonly resultadoValidacion: string | null;
   readonly saldoEsperadoCongelado: string | null;
+  /** El servidor resolvió el nombre dictado distinto que el dispositivo (FR-6.9). */
+  readonly resolucionDiscrepante: boolean;
 }
 
 export interface Consolidado {
@@ -95,6 +98,11 @@ export function clasificar(
   // comparar; "no coincide con el sistema" manda a recontar contra una sola.
 
   if (afirmadas.length === 0) return auditable('sin_cobertura');
+
+  // FR-6.9 · Va primero entre los motivos comparables porque cambia la
+  // pregunta: no es "¿cuántos hay?" sino "¿de qué artículo estamos hablando?".
+  // Contar otra vez no resuelve nada si el artículo contado no era este.
+  if (afirmadas.some((a) => a.resolucionDiscrepante)) return auditable('resolucion_discrepante');
 
   // Comparación EXACTA entre rondas, sin tolerancia. La merma explica que el
   // estante difiera del sistema —evaporación, mermas de corte—, no que dos

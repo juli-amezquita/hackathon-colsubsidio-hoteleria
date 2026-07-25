@@ -40,6 +40,16 @@ export const RegistroEntradaSchema = z
     origenParse: OrigenParseSchema,
     origenNombre: OrigenNombreSchema.nullable(),
 
+    /**
+     * El texto crudo tal como se dictó, cuando lo hubo (FR-6.9).
+     *
+     * Sin él el servidor no puede volver a resolver el nombre y tiene que
+     * creerle al dispositivo — que pudo resolverlo con un catálogo viejo, sin
+     * red y con otra versión de la gramática. Con él, el servidor contrasta; y
+     * si difiere, marca en vez de corregir en silencio.
+     */
+    textoDictado: z.string().trim().min(1).nullable().default(null),
+
     /** Reloj del cliente anclado a la referencia del servidor (D-16). */
     capturadoEn: MomentoSchema,
 

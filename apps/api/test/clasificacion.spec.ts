@@ -20,6 +20,7 @@ const ronda = (extra: Partial<AfirmacionDeRonda> = {}): AfirmacionDeRonda => ({
   unidadId: KG,
   resultadoValidacion: 'aceptado',
   saldoEsperadoCongelado: '100.000',
+  resolucionDiscrepante: false,
   ...extra,
 });
 
@@ -127,6 +128,27 @@ describe('contradicción entre rondas (FR-3.4, escenario 3)', () => {
     ]);
     expect(c.clasificacion).toBe('conciliado');
     expect(c.rondasAfirmando).toBe(1);
+  });
+});
+
+describe('el nombre que el servidor resolvió distinto (FR-6.9)', () => {
+  it('manda el artículo al Auditor con su propio motivo', () => {
+    // No es una discrepancia de cantidad: contar otra vez no resuelve nada si
+    // el artículo contado no era este. La pregunta es cuál era.
+    const c = clasificar([ronda({ resolucionDiscrepante: true })]);
+    expect(c).toMatchObject({ clasificacion: 'auditable', motivo: 'resolucion_discrepante' });
+  });
+
+  it('gana sobre la discrepancia de cantidad', () => {
+    const c = clasificar([
+      ronda({ resolucionDiscrepante: true, resultadoValidacion: 'alerta_discrepancia' }),
+    ]);
+    expect(c.motivo).toBe('resolucion_discrepante');
+  });
+
+  it('una ronda con resolución discrepante arrastra a las demás', () => {
+    const c = clasificar([ronda(), ronda({ resolucionDiscrepante: true })]);
+    expect(c.motivo).toBe('resolucion_discrepante');
   });
 });
 
