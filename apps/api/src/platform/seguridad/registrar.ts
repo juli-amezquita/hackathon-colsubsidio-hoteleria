@@ -3,8 +3,11 @@ import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 
+import { HttpAdapterHost } from '@nestjs/core';
+
 import { config } from '../../config';
 import { redis } from '../redis/cliente';
+import { FiltroErrores } from './filtro-errores';
 
 /**
  * F-16 · Postura de seguridad HTTP (OWASP A01/A05).
@@ -53,7 +56,13 @@ export async function registrarSeguridad(app: NestFastifyApplication): Promise<v
     // Si Redis se cae, la API sigue atendiendo. Perder el límite es peor que
     // perder el servicio, pero mucho menos peor (Restricción 5).
     skipOnError: true,
+    // ⚠️ El `statusCode` es obligatorio aquí. Sin él, Nest recibe un objeto que
+    // no es `HttpException`, lo trata como fallo no controlado y responde 500 —
+    // y un 500 le dice al cliente "el servidor está roto, reintenta", que es
+    // exactamente lo contrario de lo que un límite de tasa quiere provocar.
+    // Con 429 el dispositivo respalda y espera, que es lo correcto.
     errorResponseBuilder: () => ({
+      statusCode: 429,
       codigo: 'DEMASIADAS_PETICIONES',
       mensaje: 'Demasiadas peticiones. Intente de nuevo en un momento.',
     }),
@@ -71,6 +80,10 @@ export async function registrarSeguridad(app: NestFastifyApplication): Promise<v
       };
     }
   });
+
+  // Traduce los errores de los plugins de Fastify, que no son HttpException y
+  // sin esto saldrían como 500. Ver `filtro-errores.ts`.
+  app.useGlobalFilters(new FiltroErrores(app.get(HttpAdapterHost).httpAdapter));
 
   // CORS cerrado: solo el origen del frontend, y con credenciales porque la
   // sesión viaja en cookie.

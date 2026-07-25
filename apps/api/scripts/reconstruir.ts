@@ -36,7 +36,7 @@ async function main(): Promise<void> {
   for (const b of bodegas) {
     // Una transacción por bodega: si una falla, las demás quedan reconstruidas.
     const n = await sql.begin((trx) => servicio.reproyectar(trx, b.id));
-    total += n as number;
+    total += n;
     console.log(`${b.codigo.padEnd(34)} ${String(n).padStart(4)} artículos`);
   }
 

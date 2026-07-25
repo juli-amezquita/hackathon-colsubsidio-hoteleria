@@ -95,6 +95,7 @@ describe('F-13/F-14/F-15 · autenticación y autorización', () => {
       method: 'POST',
       url: '/sesion',
       payload: { usuario: '1000000001', password: 'Inventario2026*' },
+      remoteAddress: '10.0.0.5',
     });
 
     const bruto = login.headers['set-cookie'];
@@ -153,5 +154,46 @@ describe('F-17 · redacción de logs', () => {
     const original = { password: 'secreta' };
     redactar(original);
     expect(original.password).toBe('secreta');
+  });
+});
+
+describe('límite de tasa', () => {
+  let app: NestFastifyApplication;
+
+  beforeAll(async () => {
+    app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter(), {
+      logger: false,
+    });
+    await registrarSeguridad(app);
+    app.useGlobalGuards(new SesionGuard(app.get(Reflector), app.get(SesionService)));
+    await app.init();
+    await app.getHttpAdapter().getInstance().ready();
+  }, 30_000);
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  /**
+   * Un límite de tasa que responde 500 es peor que no tenerlo.
+   *
+   * El 500 le dice al cliente "el servidor está roto": el dispositivo lo trata
+   * como fallo transitorio y REINTENTA, que es exactamente lo contrario de lo
+   * que un límite quiere provocar. Con 429 respalda y espera.
+   *
+   * Se descubrió porque dos suites en paralelo consumían el cupo entre ellas y
+   * la API devolvía 500 sin decir por qué.
+   */
+  it('responde 429, no 500, al superar el cupo', async () => {
+    const ip = '10.9.9.9';
+    const inject = () =>
+      app.getHttpAdapter().getInstance().inject({ method: 'GET', url: '/salud', remoteAddress: ip } as never);
+
+    let ultima = 200;
+    for (let i = 0; i < 320 && ultima === 200; i++) {
+      ultima = (await inject()).statusCode;
+    }
+
+    expect(ultima).toBe(429);
   });
 });

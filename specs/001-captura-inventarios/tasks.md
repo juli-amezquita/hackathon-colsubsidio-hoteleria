@@ -119,19 +119,19 @@ Cada slice atraviesa datos → dominio → API → UI → pruebas, y termina en 
 
 ### Slice 1 — Conteo ciego en ronda propia (P1)
 
-| # | Tarea |
-|---|---|
-| H1-01 | Dominio `captura`: abrir ronda, registrar conteo con secuencia monótona, cerrar ronda |
-| H1-02 | Dominio `catalogo`: **resolución del nombre dictado** por `pg_trgm` + alias, con umbral de aceptación y umbral de margen (FR-1.27). Devuelve artículo resuelto o lista de candidatos. **Sin saldo esperado en la respuesta** |
+| # | Tarea | Estado |
+|---|---|---|
+| H1-01 | Dominio `captura`: abrir ronda, registrar conteo con secuencia monótona, cerrar ronda | ✅ abrir/registrar/cerrar con secuencia monótona |
+| H1-02 | Dominio `catalogo`: **resolución del nombre dictado** por `pg_trgm` + alias, con umbral de aceptación y umbral de margen (FR-1.27). Devuelve artículo resuelto o lista de candidatos. **Sin saldo esperado en la respuesta** | ✅ pg_trgm + alias, dos umbrales |
 | H1-02b `[P]` | Tabla `articulo_alias` por bodega + métrica de tasa de desambiguación manual por bodega (señal de D-19) |
-| H1-03 | Endpoints `POST /rondas`, `POST /resolucion-articulo`, `POST /registros`, `GET /cuadre-cierre`, `POST /cierre` |
-| H1-04 | Corrección dentro de la ronda: exige `confirmaCorreccion`, **no suma**, conserva ambos (D4) |
-| H1-05 | Cuadre de cierre: cada artículo no registrado exige *contado en cero* o *no contado* (D1) |
-| H1-06 | UI de dictado libre: agente de voz continuo, artículo resuelto en pantalla, **selector de candidatos por toque** cuando el nombre no resuelve, alternativa por texto con verificación explícita |
-| H1-06b | Persistir `saldo_esperado_congelado` y `origen_nombre` en cada registro (D8, FR-1.26) |
+| H1-03 | Endpoints `POST /rondas`, `POST /resolucion-articulo`, `POST /registros`, `GET /cuadre-cierre`, `POST /cierre` | ✅ 5 endpoints en producción |
+| H1-04 | Corrección dentro de la ronda: exige `confirmaCorreccion`, **no suma**, conserva ambos (D4) | ✅ corrección conserva ambos y NO suma |
+| H1-05 | Cuadre de cierre: cada artículo no registrado exige *contado en cero* o *no contado* (D1) | ✅ cuadre: contado en cero vs no contado |
+| H1-06 | UI de dictado libre: agente de voz continuo, artículo resuelto en pantalla, **selector de candidatos por toque** cuando el nombre no resuelve, alternativa por texto con verificación explícita | ⏳ del compañero (UI de dictado) |
+| H1-06b | Persistir `saldo_esperado_congelado` y `origen_nombre` en cada registro (D8, FR-1.26) | ✅ saldo congelado + origen_nombre en cada fila |
 | H1-07 `[P]` | Accesibilidad de la ruta de conteo: una mano, contraste, lector de pantalla |
-| H1-08 | **Test E2**: el saldo esperado no es obtenible desde el dispositivo por ningún medio |
-| H1-09 | Test E1 extremo a extremo |
+| H1-08 | **Test E2**: el saldo esperado no es obtenible desde el dispositivo por ningún medio | ✅ E2: recorre cada respuesta valor por valor |
+| H1-09 | Test E1 extremo a extremo | ✅ E1: 16 pruebas e2e |
 
 **Demostrable**: un operario cuenta 20 artículos por voz y cierra su ronda. El papel ya sobra.
 
@@ -167,16 +167,16 @@ Cada slice atraviesa datos → dominio → API → UI → pruebas, y termina en 
 
 ### Slice 4 — Reconteo del Auditor (P4)
 
-| # | Tarea |
-|---|---|
-| H4-01 | Bandeja del Auditor: exclusivamente lo auditable |
-| H4-02 | Detalle por ronda con autor y cantidad; diferencia contra sistema **solo** para el Auditor |
-| H4-03 | Reconteo por voz o texto, append-only |
-| H4-04 | Código de razón de catálogo controlado, obligatorio para cerrar (R4) |
-| H4-05 | **Árbitro** (`claude-opus-5`): ordena la evidencia del caso. **No decide** quién tiene razón |
-| H4-06 | Señalar en la traza cuando el Auditor auditó una ronda propia |
-| H4-07 | Bloqueo del cierre con auditables pendientes |
-| H4-08 | Test E5 |
+| # | Tarea | Estado |
+|---|---|---|
+| H4-01 | Bandeja del Auditor: exclusivamente lo auditable | ✅ bandeja con `resuelto`; pendientes aparte |
+| H4-02 | Detalle por ronda con autor y cantidad; diferencia contra sistema **solo** para el Auditor | ✅ saldo y diferencia por ronda, solo rol Auditor (403 al Operador) |
+| H4-03 | Reconteo por voz o texto, append-only | ✅ append-only con idempotencia; voz o texto |
+| H4-04 | Código de razón de catálogo controlado, obligatorio para cerrar (R4) | ✅ catálogo controlado; razón inventada → 400 |
+| H4-05 | **Árbitro** (`claude-opus-5`): ordena la evidencia del caso. **No decide** quién tiene razón | ✅ árbitro con `claude-opus-5` + respaldo determinista; sin campo de veredicto |
+| H4-06 | Señalar en la traza cuando el Auditor auditó una ronda propia | ✅ `conflicto_independencia` calculado y persistido |
+| H4-07 | Bloqueo del cierre con auditables pendientes | ✅ `AUDITABLES_PENDIENTES` bloquea el cierre |
+| H4-08 | Test E5 | ✅ E5: 18 pruebas e2e |
 
 **Demostrable**: el Auditor resuelve 8 ítems en vez de recorrer 800, con la evidencia ya ordenada.
 

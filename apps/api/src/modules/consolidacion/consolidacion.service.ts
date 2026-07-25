@@ -71,6 +71,18 @@ export class ConsolidacionService implements Consumidor {
     const articulos = await trx<{ id: string }[]>`
       SELECT id FROM articulo WHERE bodega_id = ${bodegaId} AND activo`;
 
+    // Los reconteos son parte del libro, igual que los registros. Entran en la
+    // reproyección para que el valor del Auditor sobreviva a reconstruir la
+    // bodega entera (FR-4.5): si solo se escribiera al recontar, la primera
+    // ronda que cerrara después lo borraría sin que nadie lo notara.
+    const reconteos = await trx<{ articulo_id: string; cantidad: string; unidad_id: string }[]>`
+      SELECT articulo_id, cantidad, unidad_id FROM reconteo_vigente
+      WHERE bodega_id = ${bodegaId} AND articulo_id IS NOT NULL`;
+
+    const porAuditor = new Map(
+      reconteos.map((r) => [r.articulo_id, { cantidad: r.cantidad, unidadId: r.unidad_id }]),
+    );
+
     const porArticulo = new Map<string, AfirmacionDeRonda[]>();
     for (const f of filas) {
       const lista = porArticulo.get(f.articulo_id) ?? [];
@@ -86,7 +98,7 @@ export class ConsolidacionService implements Consumidor {
     }
 
     for (const { id } of articulos) {
-      await this.guardar(trx, bodegaId, id, clasificar(porArticulo.get(id) ?? []));
+      await this.guardar(trx, bodegaId, id, clasificar(porArticulo.get(id) ?? [], porAuditor.get(id)));
     }
 
     return articulos.length;
@@ -117,25 +129,39 @@ export class ConsolidacionService implements Consumidor {
         actualizado_en           = now()`;
 
     // La discrepancia es la unidad de trabajo del Auditor (Slice 4). Se abre
-    // una por artículo auditable y se deja abierta mientras lo siga siendo;
-    // si el artículo se concilia, la que hubiera queda cerrada por el propio
-    // cierre de inventario, no borrada — nada se borra en este sistema.
+    // una por artículo auditable y solo si no existe ya ninguna.
+    //
+    // Que la condición sea "ninguna" y no "ninguna abierta" es deliberado: un
+    // caso que el Auditor cerró con su causa NO se reabre solo porque la
+    // bodega se reproyecte. Reabrirlo desharía su decisión sin que nadie la
+    // revocara, y su cifra prevalece de todos modos (FR-4.5).
     if (c.clasificacion === 'auditable' && c.motivo) {
       await trx`
         INSERT INTO discrepancia (id, bodega_id, articulo_id, motivo)
         SELECT gen_random_uuid(), ${bodegaId}, ${articuloId}, ${c.motivo}
         WHERE NOT EXISTS (
           SELECT 1 FROM discrepancia
-          WHERE bodega_id = ${bodegaId} AND articulo_id = ${articuloId} AND estado <> 'cerrada')`;
+          WHERE bodega_id = ${bodegaId} AND articulo_id = ${articuloId})`;
     }
   }
 
-  /** La bandeja: exclusivamente lo auditable (FR-4.1). */
+  /**
+   * La bandeja: exclusivamente lo auditable (FR-4.1).
+   *
+   * Un artículo sigue siendo `auditable` incluso después de que el Auditor lo
+   * resuelva: esa es la conclusión de los conteos y no cambia con el tiempo.
+   * Lo que cambia es si alguien ya lo atendió, y eso viaja en `resuelto`.
+   */
   async auditables(bodegaId: string) {
     const filas = await conexion()<
-      { articulo_id: string; nombre: string; codigo: string | null; motivo_auditable: string; rondas_afirmando: number }[]
+      { articulo_id: string; nombre: string; codigo: string | null; motivo_auditable: string; rondas_afirmando: number; resuelto: boolean }[]
     >`
-      SELECT c.articulo_id, a.nombre, a.codigo, c.motivo_auditable, c.rondas_afirmando
+      SELECT c.articulo_id, a.nombre, a.codigo, c.motivo_auditable, c.rondas_afirmando,
+             NOT EXISTS (
+               SELECT 1 FROM discrepancia d
+               WHERE d.bodega_id = c.bodega_id AND d.articulo_id = c.articulo_id
+                 AND d.estado <> 'cerrada'
+             ) AS resuelto
       FROM articulo_consolidado c
       JOIN articulo a ON a.id = c.articulo_id
       WHERE c.bodega_id = ${bodegaId} AND c.clasificacion = 'auditable'
@@ -147,6 +173,7 @@ export class ConsolidacionService implements Consumidor {
       codigo: f.codigo,
       motivo: f.motivo_auditable,
       rondasAfirmando: f.rondas_afirmando,
+      resuelto: f.resuelto,
     }));
   }
 
@@ -224,6 +251,21 @@ export class ConsolidacionService implements Consumidor {
       throw new BadRequestException({
         codigo: 'SIN_RONDAS_CERRADAS',
         mensaje: 'No se puede cerrar el inventario de una bodega sin al menos una ronda cerrada.',
+      });
+    }
+
+    // H4-07, FR-4.8 · Y tampoco con ítems auditables sin resolver. Cerrar con
+    // pendientes publicaría al ERP artículos que el propio sistema marcó como
+    // dudosos, avalados por nadie.
+    const [pendientes] = await conexion()<{ n: number }[]>`
+      SELECT count(*)::int n FROM discrepancia
+      WHERE bodega_id = ${bodegaId} AND estado <> 'cerrada'`;
+
+    if ((pendientes?.n ?? 0) > 0) {
+      throw new BadRequestException({
+        codigo: 'AUDITABLES_PENDIENTES',
+        mensaje: `Quedan ${pendientes!.n} ítems auditables sin resolver.`,
+        detalles: { pendientes: pendientes!.n },
       });
     }
   }

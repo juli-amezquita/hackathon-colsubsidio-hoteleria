@@ -25,14 +25,12 @@ import { registrarSeguridad } from '../src/platform/seguridad/registrar';
  */
 
 const URL_BD = process.env['DATABASE_URL'] ?? 'postgres://cci:cci_local@localhost:5432/cci';
-const BODEGA_PRUEBA = 'ZOOLOGICO';
 
 describe('Slice 3 · consolidación y clasificación', () => {
   let app: NestFastifyApplication;
   let sql: postgres.Sql;
   let cookieOperador: string;
   let cookieAuditor: string;
-  let bodegaId: string;
   let despachador: DespachadorService;
   let consolidacion: ConsolidacionService;
 
@@ -40,6 +38,9 @@ describe('Slice 3 · consolidación y clasificación', () => {
     app.getHttpAdapter().getInstance().inject({
       ...opciones,
       headers: { cookie, 'content-type': 'application/json' },
+      // El límite de tasa es por IP y las suites corren en paralelo: sin una
+      // IP propia por archivo, se consumen el cupo entre ellas.
+      remoteAddress: '10.0.0.3',
     } as never);
 
   const entrar = async (documento: string): Promise<string> => {
@@ -47,6 +48,7 @@ describe('Slice 3 · consolidación y clasificación', () => {
       method: 'POST',
       url: '/sesion',
       payload: { usuario: documento, password: 'Inventario2026*' },
+      remoteAddress: '10.0.0.3',
     });
     const bruto = r.headers['set-cookie'];
     return (Array.isArray(bruto) ? bruto[0]! : String(bruto)).split(';')[0]!;
@@ -69,8 +71,6 @@ describe('Slice 3 · consolidación y clasificación', () => {
     cookieOperador = await entrar('1000000001');
     cookieAuditor = await entrar('1000000002');
 
-    const [b] = await sql<{ id: string }[]>`SELECT id FROM bodega WHERE codigo = ${BODEGA_PRUEBA}`;
-    bodegaId = b!.id;
   }, 60_000);
 
   afterAll(async () => {
@@ -314,7 +314,7 @@ describe('Slice 3 · consolidación y clasificación', () => {
       // Y el intento equivocado sigue en la traza, sin haberse tocado.
       const filas = await sql<{ cantidad: string }[]>`
         SELECT cantidad FROM registro_conteo
-        WHERE ronda_id = ${rondaId} AND articulo_id = ${ids[0]} ORDER BY secuencia`;
+        WHERE ronda_id = ${rondaId} AND articulo_id = ${ids[0]!} ORDER BY secuencia`;
       expect(filas.map((f) => Number(f.cantidad))).toEqual([5, 50]);
     });
   });
@@ -328,20 +328,18 @@ describe('Slice 3 · consolidación y clasificación', () => {
       ]);
       await rondaCompleta(b, new Map([[ids[0]!, 10], [ids[1]!, 3]]));
 
-      const antes = await sql`
+      const proyeccion = () => sql<Record<string, unknown>[]>`
         SELECT articulo_id, clasificacion, motivo_auditable, valor_final, rondas_afirmando
         FROM articulo_consolidado WHERE bodega_id = ${b} ORDER BY articulo_id`;
+
+      const antes = [...(await proyeccion())];
 
       // Se borra la proyección entera. Si el libro es de verdad la fuente de
       // verdad, esto no puede perder nada.
       await sql`DELETE FROM articulo_consolidado WHERE bodega_id = ${b}`;
       await sql.begin((trx) => consolidacion.reproyectar(trx, b));
 
-      const despues = await sql`
-        SELECT articulo_id, clasificacion, motivo_auditable, valor_final, rondas_afirmando
-        FROM articulo_consolidado WHERE bodega_id = ${b} ORDER BY articulo_id`;
-
-      expect(despues).toEqual(antes);
+      expect([...(await proyeccion())]).toEqual(antes);
     });
 
     it('reproyectar dos veces no cambia nada: es idempotente', async () => {
@@ -351,9 +349,9 @@ describe('Slice 3 · consolidación y clasificación', () => {
       await sql.begin((trx) => consolidacion.reproyectar(trx, b));
       await sql.begin((trx) => consolidacion.reproyectar(trx, b));
 
-      const [{ n }] = await sql<{ n: number }[]>`
+      const [abiertas] = await sql<{ n: number }[]>`
         SELECT count(*)::int n FROM discrepancia WHERE bodega_id = ${b} AND estado <> 'cerrada'`;
-      expect(n).toBe(0);
+      expect(abiertas!.n).toBe(0);
       expect((await consolidadoDe(b, ids[0]!))!.clasificacion).toBe('conciliado');
     });
   });

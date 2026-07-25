@@ -37,6 +37,9 @@ describe('Slice 1 · conteo ciego en ronda propia', () => {
     app.getHttpAdapter().getInstance().inject({
       ...opciones,
       headers: { cookie, 'content-type': 'application/json' },
+      // El límite de tasa es por IP y las suites corren en paralelo: sin una
+      // IP propia por archivo, se consumen el cupo entre ellas.
+      remoteAddress: '10.0.0.1',
     } as never);
 
   beforeAll(async () => {
@@ -54,6 +57,7 @@ describe('Slice 1 · conteo ciego en ronda propia', () => {
       method: 'POST',
       url: '/sesion',
       payload: { usuario: '1000000001', password: 'Inventario2026*' },
+      remoteAddress: '10.0.0.1',
     });
     const bruto = login.headers['set-cookie'];
     cookie = (Array.isArray(bruto) ? bruto[0]! : String(bruto)).split(';')[0]!;

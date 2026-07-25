@@ -23,6 +23,8 @@ const EsquemaEntorno = z.object({
   DEEPGRAM_API_KEY: z.string().optional(),
 
   PROVEEDOR_INTERPRETACION: z.enum(['simulado', 'anthropic']).default('simulado'),
+  /** El árbitro que ordena la evidencia del caso (H4-05). Nunca decide. */
+  PROVEEDOR_ARBITRAJE: z.enum(['determinista', 'anthropic']).default('determinista'),
   OPENROUTER_API_KEY: z.string().optional(),
   // Vacío = API de Anthropic directa. Con valor = pasarela compatible
   // (OpenRouter). Se deja configurable porque el cacheo de prompt con TTL de
@@ -56,6 +58,9 @@ export function config(): Configuracion {
   const c = resultado.data;
   if (c.PROVEEDOR_VOZ === 'deepgram' && !c.DEEPGRAM_API_KEY) {
     throw new Error('PROVEEDOR_VOZ=deepgram exige DEEPGRAM_API_KEY');
+  }
+  if (c.PROVEEDOR_ARBITRAJE === 'anthropic' && !c.OPENROUTER_API_KEY) {
+    throw new Error('PROVEEDOR_ARBITRAJE=anthropic exige OPENROUTER_API_KEY');
   }
   if (c.PROVEEDOR_INTERPRETACION === 'anthropic' && !c.OPENROUTER_API_KEY) {
     throw new Error('PROVEEDOR_INTERPRETACION=anthropic exige OPENROUTER_API_KEY');

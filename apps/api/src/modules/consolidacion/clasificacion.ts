@@ -51,7 +51,16 @@ const PRODUJO_DIFERENCIA = new Set([
   'sin_verificacion',
 ]);
 
-export function clasificar(afirmaciones: readonly AfirmacionDeRonda[]): Consolidado {
+/** El reconteo vigente del Auditor, si lo hubo (FR-4.5). */
+export interface ReconteoDeAuditor {
+  readonly cantidad: string;
+  readonly unidadId: string;
+}
+
+export function clasificar(
+  afirmaciones: readonly AfirmacionDeRonda[],
+  reconteo?: ReconteoDeAuditor | null,
+): Consolidado {
   // `no_contado` es ausencia de afirmación, no una cantidad (FR-3.9). Una ronda
   // que lo marcó declaró que el artículo quedó fuera de su alcance, y eso no
   // dice nada sobre lo que hay en el estante.
@@ -67,12 +76,14 @@ export function clasificar(afirmaciones: readonly AfirmacionDeRonda[]): Consolid
   const auditable = (motivo: MotivoAuditable): Consolidado => ({
     clasificacion: 'auditable',
     motivo,
-    // Lo auditable NO lleva valor final. Quien lo pone es el Auditor, con su
-    // código de razón (Slice 4). Rellenarlo aquí con "lo más probable" sería
-    // exactamente la decisión automática que FR-3.4 prohíbe.
-    valorFinal: null,
-    unidadId: null,
-    origenValor: null,
+    // Lo auditable NO lleva valor final MIENTRAS nadie lo haya recontado.
+    // Rellenarlo con "lo más probable" sería exactamente la decisión
+    // automática que FR-3.4 prohíbe. Cuando el Auditor recuenta, su cifra
+    // prevalece sobre la de cualquier Operador (FR-4.5) — y prevalece aquí,
+    // en la regla, para que sobreviva a cada reproyección de la bodega.
+    valorFinal: reconteo?.cantidad ?? null,
+    unidadId: reconteo?.unidadId ?? null,
+    origenValor: reconteo ? 'auditor' : null,
     ...base,
   });
 
@@ -113,9 +124,13 @@ export function clasificar(afirmaciones: readonly AfirmacionDeRonda[]): Consolid
   return {
     clasificacion: 'conciliado',
     motivo: null,
-    valorFinal: ultima.cantidad,
-    unidadId: ultima.unidadId,
-    origenValor: 'conteo_ciego',
+    // El reconteo manda incluso aquí. Es un caso raro —un artículo que ya
+    // concilia no llega a la bandeja— pero puede darse si una ronda posterior
+    // lo devuelve a conciliado después de que el Auditor lo tocara, y en ese
+    // cruce la regla no puede dudar: el valor del Auditor prevalece (FR-4.5).
+    valorFinal: reconteo?.cantidad ?? ultima.cantidad,
+    unidadId: reconteo?.unidadId ?? ultima.unidadId,
+    origenValor: reconteo ? 'auditor' : 'conteo_ciego',
     ...base,
   };
 }
