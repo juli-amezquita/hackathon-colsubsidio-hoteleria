@@ -31,7 +31,22 @@ export interface ProveedorDeVoz {
    * Corta en el tiempo y en el alcance a propósito: si se filtra, el daño
    * está limitado a una sesión de conteo, no a la cuenta.
    */
-  emitirCredencial(contexto: { usuarioId: string; rondaId: string }): Promise<CredencialDeVoz>;
+  emitirCredencial(contexto: {
+    usuarioId: string;
+    rondaId: string;
+    /**
+     * Vocabulario de la bodega: los nombres del catálogo.
+     *
+     * No es una optimización menor. El transcriptor decide entre "acelga" y
+     * "aceite" con un modelo general del español; con el catálogo delante
+     * decide entre las palabras que de verdad pueden aparecer en ESA bodega.
+     * Son entre 55 y 344 nombres, y ya los tenemos.
+     *
+     * ⚠️ Términos, nunca saldos. Lo que viaja al dispositivo en la credencial
+     * es lo mismo que ya viaja en el catálogo cacheado (F-21).
+     */
+    readonly terminos: readonly string[];
+  }): Promise<CredencialDeVoz>;
 }
 
 export const PROVEEDOR_VOZ = Symbol('ProveedorDeVoz');

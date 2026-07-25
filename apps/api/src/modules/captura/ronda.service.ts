@@ -15,6 +15,7 @@ import type postgres from 'postgres';
 import { conexion } from '../../platform/db/cliente';
 import { PROVEEDOR_CATALOGO, type ProveedorDeCatalogo } from '../../platform/dominio/catalogo';
 import { EVENT_BUS, type EventBus } from '../../platform/eventos/bus';
+import type { ProveedorDeRondas } from '../../platform/dominio/rondas';
 import { desfaseReloj, insertarIdempotente } from '../../platform/idempotencia/idempotencia';
 import { evaluarDescripcion } from './descripcion';
 import { type Resultado, type Veredicto, validar } from './validacion';
@@ -36,7 +37,7 @@ const esAlerta = (v: Veredicto | null): boolean =>
  *   · **El evento se escribe en la misma transacción que su causa** (Principio IV).
  */
 @Injectable()
-export class RondaService {
+export class RondaService implements ProveedorDeRondas {
   constructor(
     @Inject(PROVEEDOR_CATALOGO) private readonly catalogo: ProveedorDeCatalogo,
     @Inject(EVENT_BUS) private readonly bus: EventBus,
@@ -655,6 +656,11 @@ export class RondaService {
   async bodegaDeRonda(rondaId: string, operadorId: string): Promise<string> {
     const r = await this.rondaAbiertaDe(rondaId, operadorId);
     return r.bodega_id;
+  }
+
+  /** Interfaz publicada (`ProveedorDeRondas`): mismo método, nombre estable. */
+  bodegaDeRondaPropia(rondaId: string, operadorId: string): Promise<string> {
+    return this.bodegaDeRonda(rondaId, operadorId);
   }
 
   /** Una ronda cerrada es inmutable: no admite más registros (FR-1.17). */

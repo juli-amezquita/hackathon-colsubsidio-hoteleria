@@ -60,23 +60,48 @@ jobs:
       - name: Lint — incluye la frontera entre dominios (S-09)
         run: pnpm lint
 
+      # PRIMERO la ida y vuelta, sobre una base vacía: `verificar` revierte
+      # hasta cero y vuelve a aplicar, así que se lleva por delante cualquier
+      # dato. Correrla después de sembrar dejaría la base vacía para las
+      # pruebas, que es como estaba y por eso esta CI nunca habría pasado.
       - name: Migraciones ida y vuelta
         # Toda migración debe revertir. La que no revierte, no entra (Restricción 6).
         run: pnpm --filter @cci/api exec tsx scripts/migrar.ts verificar
 
+      # Y DESPUÉS las semillas. Las pruebas corren contra una base real —a
+      # propósito: verificar la inmutabilidad contra un doble no verificaría
+      # nada— así que sin el inventario del cliente cargado, la mitad de la
+      # suite falla en la primera consulta.
+      - name: Base de datos con el inventario del cliente
+        run: pnpm db:seed
+
       - name: Pruebas
         run: pnpm test
 
-      - name: Semillas desde el inventario del cliente
-        run: pnpm db:migrate && pnpm db:seed
+      # `pnpm start` ejecuta `node dist/main.js`: sin compilar la API no hay
+      # nada que arrancar. Compilar aquí además verifica el build de producción,
+      # que es distinto del que usan las pruebas.
+      - name: Compilar la API
+        run: pnpm --filter @cci/api build
 
       - name: Carga — 500 concurrentes, p95 < 200 ms (F-33)
         # Los umbrales de k6 FALLAN LA BUILD; no generan un ticket.
+        env:
+          # El perfil completo son 7 minutos. En CI se corre el corto, que
+          # verifica que la prueba EXISTE y que los umbrales se cumplen; el
+          # completo se lanza a mano contra producción antes de entregar.
+          PERFIL: ci
         run: |
-          curl -fsSL https://github.com/grafana/k6/releases/latest/download/k6-linux-amd64.tar.gz \
+          # El asset de k6 lleva la versión en el nombre, así que
+          # `/latest/download/<nombre-fijo>` da 404. Se resuelve la etiqueta.
+          VERSION=$(curl -fsSL https://api.github.com/repos/grafana/k6/releases/latest \
+            | grep -o '"tag_name": *"[^"]*"' | head -1 | cut -d'"' -f4)
+          curl -fsSL "https://github.com/grafana/k6/releases/download/${VERSION}/k6-${VERSION}-linux-amd64.tar.gz" \
             | sudo tar -xz --strip-components=1 -C /usr/local/bin --wildcards '*/k6'
+          k6 version
+
           pnpm --filter @cci/api start &
-          npx wait-on http://localhost:3000/salud -t 60000
+          npx wait-on http://localhost:3000/salud -t 90000
           k6 run tests/perf/conteo.js
 
   infraestructura:

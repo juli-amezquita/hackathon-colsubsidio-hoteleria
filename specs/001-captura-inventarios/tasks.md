@@ -109,7 +109,7 @@ Todo lo que **más de una historia** necesita. Nada de la Fase 3 empieza sin est
 |---|---|---|---|
 | F-31 | 🟦 | Redis para catálogo, saldos y tolerancias vigentes | ✅ degrada a Postgres si Redis cae; el saldo se cachea en servidor y NUNCA se sirve |
 | F-32 `[P]` | 🟦 | Presupuesto por etapa instrumentado y verificado en CI | ✅ 6 pruebas; detecta ciclo desbordado aunque cada etapa quepa |
-| F-33 `[P]` | 🟦 | k6 con 500 concurrentes; falla la build por encima de p95 200 ms | ✅ `tests/perf/conteo.js` en CI con `abortOnFail` |
+| F-33 `[P]` | 🟦 | k6 con 500 concurrentes; falla la build por encima de p95 200 ms | ✅ ejecutada por primera vez: p95 10,56 ms con 500 VUs, 0 fallos de 19.719 |
 
 ---
 

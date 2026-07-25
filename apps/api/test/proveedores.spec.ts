@@ -8,7 +8,7 @@ const CATALOGO = ['ACEITE DE OLIVA', 'ARROZ', 'PLATO BLANCO CUADRADO'];
 
 describe('F-23/F-24 · credencial de voz', () => {
   it('emite un token efímero, nunca la credencial de cuenta', async () => {
-    const c = await new VozSimulada().emitirCredencial();
+    const c = await new VozSimulada().emitirCredencial({ usuarioId: 'u', rondaId: 'r', terminos: [] });
 
     expect(c.token).toMatch(/^simulado-/);
     // Corta en el tiempo: si se filtra, el daño dura un minuto.
@@ -18,7 +18,7 @@ describe('F-23/F-24 · credencial de voz', () => {
   it('pide numerales formateados al modelo', () => {
     // Sin esto llegaría "diecinueve punto ocho" y habría que normalizar
     // números en español en el dispositivo.
-    return new VozSimulada().emitirCredencial().then((c) => {
+    return new VozSimulada().emitirCredencial({ usuarioId: 'u', rondaId: 'r', terminos: [] }).then((c) => {
       expect(c.opciones['numerals']).toBe(true);
       expect(c.opciones['language']).toBe('es');
     });

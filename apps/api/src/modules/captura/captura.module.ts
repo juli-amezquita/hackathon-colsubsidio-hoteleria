@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 
 import { DominiosModule } from '../../composicion/dominios.module';
+import { PROVEEDOR_RONDAS } from '../../platform/dominio/rondas';
 import { EVENT_BUS } from '../../platform/eventos/bus';
 import { OutboxBus } from '../../platform/eventos/outbox';
 import { CapturaController } from './captura.controller';
@@ -17,6 +18,11 @@ import { RondaService } from './ronda.service';
 @Module({
   imports: [DominiosModule],
   controllers: [CapturaController],
-  providers: [RondaService, { provide: EVENT_BUS, useClass: OutboxBus }],
+  providers: [
+    RondaService,
+    { provide: EVENT_BUS, useClass: OutboxBus },
+    { provide: PROVEEDOR_RONDAS, useExisting: RondaService },
+  ],
+  exports: [PROVEEDOR_RONDAS],
 })
 export class CapturaModule {}

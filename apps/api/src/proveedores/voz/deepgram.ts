@@ -20,9 +20,21 @@ export class DeepgramVoz implements ProveedorDeVoz {
 
   private static readonly VIDA_SEGUNDOS = 60;
 
+  /**
+   * Cuántos términos se envían.
+   *
+   * El límite lo pone el proveedor y los catálogos grandes lo rebasan (344
+   * artículos en la bodega mayor). Se recortan por longitud: los nombres
+   * largos —"AGUA SABORIZADA H2O", "PAN PERRO ELABORADO PISCILAGO"— son los
+   * que un modelo general del español acierta peor, y los cortos —"SAL",
+   * "ARROZ"— ya los reconoce sin ayuda.
+   */
+  private static readonly MAX_TERMINOS = 100;
+
   async emitirCredencial(contexto: {
     usuarioId: string;
     rondaId: string;
+    readonly terminos: readonly string[];
   }): Promise<CredencialDeVoz> {
     const clave = config().DEEPGRAM_API_KEY;
     if (!clave) throw new Error('DEEPGRAM_API_KEY no está configurada.');
@@ -52,7 +64,23 @@ export class DeepgramVoz implements ProveedorDeVoz {
       expiraEn: new Date(Date.now() + vida * 1000).toISOString(),
       proveedor: 'deepgram',
       endpoint: 'wss://api.deepgram.com/v2/listen',
-      opciones: { ...OPCIONES_MODELO, model: 'flux-multilingual' },
+      opciones: {
+        ...OPCIONES_MODELO,
+        model: 'flux-multilingual',
+        // El dispositivo los pasa como parámetros de la conexión. Van aquí y no
+        // en el token porque el token es una credencial, no configuración.
+        ...(contexto.terminos.length > 0
+          ? { keyterm: DeepgramVoz.prioritarios(contexto.terminos).join(',') }
+          : {}),
+      },
     };
+  }
+
+  /** Los nombres que más se benefician de la ayuda: los largos y raros. */
+  private static prioritarios(terminos: readonly string[]): string[] {
+    return [...terminos]
+      .filter((t) => t.trim().length > 3)
+      .sort((a, b) => b.length - a.length)
+      .slice(0, DeepgramVoz.MAX_TERMINOS);
   }
 }

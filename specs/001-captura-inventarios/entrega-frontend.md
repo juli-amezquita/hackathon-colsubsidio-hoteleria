@@ -183,6 +183,24 @@ esto donde el backend no puede ayudarte.
 duplicado; cerrar el navegador a mitad y volver a entrar deja al operario en el
 ítem siguiente; y una alerta diferida aparece en pantalla sin que él la busque.
 
+## F-36 · El vocabulario viene en la credencial (nuevo)
+
+`POST /voz/token/:rondaId` devuelve ahora, dentro de `opciones`, el **vocabulario
+de la bodega**: los nombres del catálogo, como `keyterm`.
+
+**Pásalos tal cual a la conexión con Deepgram.** No es cosmético: el
+transcriptor decide entre "acelga" y "aceite" con un modelo general del
+español; con el catálogo delante decide entre las palabras que de verdad pueden
+aparecer en esa bodega. Es la mejora de reconocimiento más barata que tiene el
+sistema, y el dato ya existía.
+
+Mándalos **todos los de `opciones`**, sin filtrar ni reordenar — el servidor ya
+recortó y priorizó (los nombres largos son los que un modelo general acierta
+peor; "SAL" y "ARROZ" no necesitan ayuda).
+
+> Ojo: los keyterms **no** ayudan con los números. Para "34 vs 24" la defensa
+> es la relectura dígito a dígito de F-30, que es tuya.
+
 ## Un detalle que cuesta media hora encontrar
 
 `POST /integracion/bodegas/:id/cierre` y `POST .../envio` **no llevan cuerpo**.

@@ -19,6 +19,19 @@ import { Trend } from 'k6/metrics';
  */
 
 const BASE = __ENV.API_URL || 'http://localhost:3000';
+
+/**
+ * Cada VU es un dispositivo distinto, y tiene que parecerlo.
+ *
+ * El límite de tasa son 300 peticiones por minuto **por IP**, y la API confía
+ * en `X-Forwarded-For` porque CloudFront va delante. Sin esta cabecera, los 500
+ * VUs comparten un solo cupo, la API responde 429 —correctamente— y la prueba
+ * mide el limitador en vez del sistema.
+ *
+ * No es un truco para esquivar el límite: es reproducir la topología real, en
+ * la que 500 operarios llegan desde 500 dispositivos.
+ */
+const ipDelVu = () => `10.${Math.floor(__VU / 250) % 250}.${__VU % 250}.1`;
 const USUARIO = __ENV.USUARIO || '1000000001';
 const CLAVE = __ENV.CLAVE || 'Inventario2026*';
 
@@ -35,12 +48,22 @@ export const options = {
     ventana_de_conteo: {
       executor: 'ramping-vus',
       startVUs: 0,
-      stages: [
-        { duration: '1m', target: 100 },
-        { duration: '2m', target: 500 },
-        { duration: '3m', target: 500 },
-        { duration: '1m', target: 0 },
-      ],
+      // El perfil completo son 7 minutos y es el que se corre a mano contra
+      // producción antes de entregar. En CI se usa el corto: verifica que la
+      // prueba EXISTE, que arranca y que los umbrales se cumplen, sin gastar
+      // siete minutos en cada push.
+      stages: __ENV.PERFIL === 'ci'
+        ? [
+            { duration: '15s', target: 50 },
+            { duration: '30s', target: 100 },
+            { duration: '15s', target: 0 },
+          ]
+        : [
+            { duration: '1m', target: 100 },
+            { duration: '2m', target: 500 },
+            { duration: '3m', target: 500 },
+            { duration: '1m', target: 0 },
+          ],
       gracefulRampDown: '30s',
     },
   },
@@ -63,7 +86,10 @@ export function setup() {
   const r = http.post(
     `${BASE}/sesion`,
     JSON.stringify({ usuario: USUARIO, password: CLAVE }),
-    { headers: { 'content-type': 'application/json' }, tags: { tipo: 'login' } },
+    {
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': '10.0.0.1' },
+      tags: { tipo: 'login' },
+    },
   );
 
   if (r.status !== 200) {
@@ -76,13 +102,17 @@ export function setup() {
 }
 
 export default function (datos) {
+  const ip = ipDelVu();
   const conSesion = {
-    headers: { cookie: datos.cookie },
+    headers: { cookie: datos.cookie, 'x-forwarded-for': ip },
     tags: { tipo: 'lectura' },
   };
 
   group('sonda', () => {
-    const r = http.get(`${BASE}/salud`, { tags: { tipo: 'lectura' } });
+    const r = http.get(`${BASE}/salud`, {
+      headers: { 'x-forwarded-for': ip },
+      tags: { tipo: 'lectura' },
+    });
     saludMs.add(r.timings.duration);
     check(r, {
       'salud responde 200': (x) => x.status === 200,

@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 
+import { DominiosModule } from '../composicion/dominios.module';
+import { CapturaModule } from '../modules/captura/captura.module';
 import { config } from '../config';
 import { InterpretacionAnthropic } from './interpretacion/anthropic';
 import { PROVEEDOR_INTERPRETACION } from './interpretacion/proveedor';
@@ -17,6 +19,7 @@ import { VozController } from './voz/voz.controller';
  * y conmutar de proveedor no exige tocar una línea de negocio.
  */
 @Module({
+  imports: [DominiosModule, CapturaModule],
   controllers: [VozController],
   providers: [
     {

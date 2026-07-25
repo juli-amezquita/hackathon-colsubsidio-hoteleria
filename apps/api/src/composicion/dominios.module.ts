@@ -15,6 +15,12 @@ import { CatalogoModule } from '../modules/catalogo/catalogo.module';
  * Con este módulo, se cambia aquí la línea que liga el token —a un cliente HTTP,
  * por ejemplo— y ningún dominio se entera. Eso es lo que el Principio III pide,
  * y por eso la regla de lint prohíbe el atajo aunque en un monolito funcione.
+ *
+ * ⚠️ Aquí van los dominios que OTROS DOMINIOS consumen. `captura` publica
+ * `PROVEEDOR_RONDAS`, pero su único consumidor es la emisión de credencial de
+ * voz, que vive en `proveedores/` — otra pieza de la raíz de composición, no un
+ * dominio. Meterlo aquí crearía un ciclo, porque `captura` importa este módulo
+ * para consumir `catalogo`.
  */
 /**
  * Se re-exporta el MÓDULO y no el token: Nest solo deja exportar un proveedor

@@ -78,7 +78,7 @@ describe('el árbitro sin modelo (H4-05)', () => {
 
 describe('la voz sin Deepgram (F-24)', () => {
   it('emite una credencial utilizable, no un error', async () => {
-    const c = await new VozSimulada().emitirCredencial();
+    const c = await new VozSimulada().emitirCredencial({ usuarioId: 'u', rondaId: 'r', terminos: [] });
     expect(c.token).toBeTruthy();
     expect(new Date(c.expiraEn).getTime()).toBeGreaterThan(Date.now());
   });

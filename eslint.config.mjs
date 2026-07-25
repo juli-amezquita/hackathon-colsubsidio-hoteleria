@@ -100,7 +100,7 @@ export default tseslint.config(
   {
     files: ['*.mjs', '*.js', 'apps/*/vitest.config.ts', 'tests/perf/**/*.js'],
     extends: [tseslint.configs.disableTypeChecked],
-    languageOptions: { globals: { ...globals.node, __ENV: 'readonly' } },
+    languageOptions: { globals: { ...globals.node, __ENV: 'readonly', __VU: 'readonly' } },
     rules: { '@typescript-eslint/no-unsafe-call': 'off' },
   },
 
