@@ -137,16 +137,16 @@ Cada slice atraviesa datos → dominio → API → UI → pruebas, y termina en 
 
 ### Slice 2 — Validaciones y discrepancia (P2)
 
-| # | Tarea |
-|---|---|
-| H2-01 | Validación de unidad esperada; alerta indicando la correcta |
-| H2-02 | Comparación contra saldo con tolerancia de merma; **el límite exacto está dentro** de tolerancia |
-| H2-03 | Congelar la tolerancia aplicada en el registro (FR-8.2: sin revaluación retroactiva) |
-| H2-04 | Alerta que **no permite deducir** saldo ni magnitud de la diferencia |
-| H2-05 | Confirmación pese a alerta → marca de advertencia y evidencia obligatoria |
-| H2-06 | Bloqueo del cierre de ronda con alertas sin resolver |
-| H2-07 | `contado_en_cero` valida como cantidad; `no_contado` no genera discrepancia |
-| H2-08 | Test E3 |
+| # | Tarea | Estado |
+|---|---|---|
+| H2-01 | Validación de unidad esperada; alerta indicando la correcta | ✅ unidad esperada; alerta con la correcta |
+| H2-02 | Comparación contra saldo con tolerancia de merma; **el límite exacto está dentro** de tolerancia | ✅ tolerancia exacta con BigInt; el límite justo cae dentro |
+| H2-03 | Congelar la tolerancia aplicada en el registro (FR-8.2: sin revaluación retroactiva) | ✅ tolerancia y veredicto congelados en la fila |
+| H2-04 | Alerta que **no permite deducir** saldo ni magnitud de la diferencia | ✅ sin dirección + verificaciones agotadas: la alerta no es oráculo |
+| H2-05 | Confirmación pese a alerta → marca de advertencia y evidencia obligatoria | ✅ advertido + evidencia diferida por endpoint propio |
+| H2-06 | Bloqueo del cierre de ronda con alertas sin resolver | ✅ vista `pendiente_de_resolver`: la misma regla avisa y bloquea |
+| H2-07 | `contado_en_cero` valida como cantidad; `no_contado` no genera discrepancia | ✅ contado_en_cero valida; no_contado no |
+| H2-08 | Test E3 | ✅ E3: 13 pruebas e2e + 18 unitarias de la regla |
 
 **Demostrable**: el sistema atrapa un error de unidad y uno de cantidad mientras el operario sigue frente al estante.
 

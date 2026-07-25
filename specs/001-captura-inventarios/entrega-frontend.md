@@ -85,6 +85,53 @@ El operario trabaja de pie, con las manos ocupadas, con ruido y a veces con guan
 
 > Si la calidad de voz resulta mala en el parque real de dispositivos, la salida es TTS en la nube **pregenerado y cacheado por artículo** — el catálogo es finito, así que se sintetiza una vez y se reproduce desde caché. No es un cambio de arquitectura; avisá y lo montamos.
 
+## F-34 · La alerta de validación (nuevo, Slice 2)
+
+Cada `POST /rondas/:id/registros` responde ahora con un campo `validacion`:
+
+```json
+{ "registroId": "…", "secuencia": 1, "recibidoEn": "…",
+  "validacion": { "resultado": "alerta_discrepancia",
+                  "unidadCorrecta": null, "exigeEvidencia": false } }
+```
+
+`resultado` es uno de `aceptado` · `alerta_unidad` · `alerta_discrepancia` ·
+`no_validable` · `sin_verificacion`.
+
+Tres cosas que la pantalla **no** puede hacer, y la razón:
+
+1. **No inventes la dirección.** El servidor sabe si sobra o falta y no lo dice.
+   Nada de "parece que falta" ni flechas: con la dirección, un operario
+   encuentra el saldo del sistema por bisección en diez intentos, y ahí se cae
+   la ceguera entera.
+2. **No repitas el envío para "reintentar la validación".** A la tercera
+   verificación del mismo artículo el servidor responde `sin_verificacion` y
+   deja de opinar. Es a propósito.
+3. **En `alerta_unidad`, `unidadCorrecta` sí viene** y se muestra: es dato del
+   catálogo que ya tenés cacheado, no el saldo.
+
+La alerta es **una pregunta**: "¿seguro que contaste eso?" con dos salidas —
+*corregir* (nuevo envío con `confirmaCorreccion: true`) o *sostener* (nuevo
+envío con `confirmaPeseAAlerta: true`).
+
+**Sostener obliga a subir el audio.** La respuesta trae `exigeEvidencia: true` y
+el conteo queda con marca de advertencia; después, cuando haya red:
+
+```
+POST /rondas/:rondaId/registros/:registroId/evidencia
+{ "claveS3": "audio/<ronda>/<registro>.webm", "claveIdempotencia": "<uuid>" }
+```
+
+**Sin ese POST la ronda no cierra.** `GET /cuadre-cierre` trae ahora un array
+`bloqueos` —con `articuloId`, `nombre`, `registroId` y `motivo`
+(`alerta_sin_responder` o `evidencia_faltante`)— que sale de la misma regla que
+aplica el bloqueo, así que podés pintar exactamente lo que falta antes de que
+el operario intente cerrar y se lleve un 400.
+
+**Se acepta cuando:** una alerta de discrepancia y una de unidad se resuelven
+por las dos vías (corregir y sostener), y la ronda cierra tras adjuntar la
+evidencia — sin que en ninguna pantalla aparezca un número que venga del ERP.
+
 ## Lo que el backend ya te da resuelto
 
 | | |

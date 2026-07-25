@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Inject, Param, Post, Req } from '@nestjs/common';
 import {
   CierreRondaSchema,
+  EvidenciaEntradaSchema,
   RegistroEntradaSchema,
   ResolucionEntradaSchema,
   type ArticuloDeTrabajo,
@@ -67,6 +68,23 @@ export class CapturaController {
     @Req() req: PeticionAutenticada,
   ): Promise<RegistroAceptado> {
     return this.rondas.registrar(rondaId, req.usuario!.usuarioId, entrada);
+  }
+
+  /**
+   * H2-05 · Evidencia de un conteo sostenido pese a una alerta (FR-2.4).
+   *
+   * Va aparte del registro porque llega después: el audio se sube cuando hay
+   * red, y el conteo no puede esperar a que la haya (D-07, F-18).
+   */
+  @Post(':rondaId/registros/:registroId/evidencia')
+  @Roles('operador')
+  evidencia(
+    @Param('rondaId') rondaId: string,
+    @Param('registroId') registroId: string,
+    @Body(cuerpo(EvidenciaEntradaSchema)) datos: never,
+    @Req() req: PeticionAutenticada,
+  ) {
+    return this.rondas.adjuntarEvidencia(rondaId, req.usuario!.usuarioId, registroId, datos);
   }
 
   @Get(':rondaId/cuadre-cierre')

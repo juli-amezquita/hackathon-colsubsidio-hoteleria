@@ -51,9 +51,11 @@ describe('F-19 · idempotencia', () => {
           const f = await t<{ id: string }[]>`
             INSERT INTO registro_conteo
               (id, ronda_id, articulo_id, secuencia, estado, cantidad, unidad_id,
+               resultado_validacion,
                modo_captura, origen_parse, capturado_en, clave_idempotencia)
             VALUES (${randomUUID()}, ${rondaId}, ${articuloId}, ${secuencia}, 'contado',
-                    ${cantidad}, ${unidadId}, 'voz', 'gramatica', now(), ${clave})
+                    ${cantidad}, ${unidadId}, 'no_validable',
+                    'voz', 'gramatica', now(), ${clave})
             ON CONFLICT (clave_idempotencia) DO NOTHING
             RETURNING id`;
           return f[0]?.id;

@@ -62,14 +62,6 @@ export const RegistroEntradaSchema = z
   });
 export type RegistroEntrada = z.infer<typeof RegistroEntradaSchema>;
 
-export const RegistroAceptadoSchema = z.object({
-  registroId: IdSchema,
-  secuencia: z.number().int(),
-  /** Sello autoritativo del servidor (D-16). */
-  recibidoEn: MomentoSchema,
-});
-export type RegistroAceptado = z.infer<typeof RegistroAceptadoSchema>;
-
 /**
  * Resultado de la validación en servidor.
  *
@@ -77,15 +69,51 @@ export type RegistroAceptado = z.infer<typeof RegistroAceptadoSchema>;
  * tolerancia — solo SI hay alerta y de qué tipo (FR-2.2). La alerta es una
  * pregunta para que el operario verifique lo que él mismo dijo, no una pista
  * que lo acerque a la cifra del sistema.
+ *
+ * Fíjate en lo que NO hay: ninguna señal de dirección. El servidor sabe si
+ * sobra o falta y se lo calla, porque "falta" más "reintenta" es un buscador
+ * binario del saldo esperado. Ver `MAX_VERIFICACIONES` en el servidor.
  */
 export const ResultadoValidacionSchema = z.object({
-  registroId: IdSchema,
-  resultado: z.enum(['aceptado', 'alerta_unidad', 'alerta_discrepancia', 'no_validable']),
+  resultado: z.enum([
+    'aceptado',
+    'alerta_unidad',
+    'alerta_discrepancia',
+    'no_validable',
+    /** El artículo agotó sus verificaciones en esta ronda. Queda auditable. */
+    'sin_verificacion',
+  ]),
   /** Presente solo en `alerta_unidad` (FR-2.1). */
   unidadCorrecta: UnidadSchema.nullable(),
+  /**
+   * El conteo quedó guardado pese a la alerta y debe respaldarse con audio
+   * (FR-2.4). La subida es diferida (D-07); lo que no es diferible es cerrar
+   * la ronda sin ella.
+   */
   exigeEvidencia: z.boolean(),
 });
 export type ResultadoValidacion = z.infer<typeof ResultadoValidacionSchema>;
+
+export const RegistroAceptadoSchema = z.object({
+  registroId: IdSchema,
+  secuencia: z.number().int(),
+  /** Sello autoritativo del servidor (D-16). */
+  recibidoEn: MomentoSchema,
+  /**
+   * El veredicto viaja con el acuse, no en una segunda llamada: el operario
+   * está frente al estante y la corrección cuesta tres metros ahora o un día
+   * dentro de una semana.
+   */
+  validacion: ResultadoValidacionSchema,
+});
+export type RegistroAceptado = z.infer<typeof RegistroAceptadoSchema>;
+
+/** Vincula el audio ya subido con el conteo que lo necesita (FR-2.4, D-07). */
+export const EvidenciaEntradaSchema = z.object({
+  claveS3: z.string().min(1),
+  claveIdempotencia: ClaveIdempotenciaSchema,
+});
+export type EvidenciaEntrada = z.infer<typeof EvidenciaEntradaSchema>;
 
 /**
  * Cuadre de cierre: por cada artículo no registrado, el Operador decide entre

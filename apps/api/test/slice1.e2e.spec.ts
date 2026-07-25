@@ -354,7 +354,19 @@ describe('Slice 1 · conteo ciego en ronda propia', () => {
     it('cierra la ronda y deja TODO artículo en estado explícito', async () => {
       const rondaId = await abrirRonda();
       const a = await unArticulo();
-      await registrar(rondaId, { articuloId: a.id, cantidad: 5, unidadId: a.unidad_esperada_id });
+
+      // Se cuenta el saldo exacto a propósito. Desde el Slice 2 una alerta sin
+      // responder bloquea el cierre (FR-2.8), y lo que esta prueba mira es el
+      // cuadre, no la validación: eso lo cubre `slice2.e2e.spec.ts`.
+      const [s] = await sql<{ cantidad: string }[]>`
+        SELECT cantidad FROM saldo_esperado
+        WHERE articulo_id = ${a.id} AND bodega_id = ${bodegaId}`;
+
+      await registrar(rondaId, {
+        articuloId: a.id,
+        cantidad: Number(s?.cantidad ?? 0),
+        unidadId: a.unidad_esperada_id,
+      });
 
       const cuadre = await pedir({ method: 'GET', url: `/rondas/${rondaId}/cuadre-cierre` });
       const pendientes = cuadre.json<{ pendientes: { articuloId: string }[] }>().pendientes;

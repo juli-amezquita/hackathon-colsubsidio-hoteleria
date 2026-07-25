@@ -28,11 +28,16 @@ export interface ProveedorDeCatalogo {
    * y para congelar el saldo en el registro hijo (D8). **Su resultado no puede
    * viajar en ninguna respuesta dirigida a un Operador** (FR-1.18) — la prueba
    * E2 recorre todas las respuestas para comprobarlo.
+   *
+   * Ambos valores son decimales EN TEXTO, tal como los entrega Postgres. La
+   * comparación con la tolerancia debe ser exacta —el límite justo cae dentro—
+   * y convertirlos a `number` aquí rompería esa exactitud antes de que la regla
+   * llegue siquiera a mirarlos.
    */
   contextoDeValidacion(
     bodegaId: string,
     articuloId: string,
-  ): Promise<{ saldoEsperado: number | null; toleranciaMerma: number | null; esPeso: boolean }>;
+  ): Promise<{ saldoEsperado: string | null; toleranciaMerma: string | null }>;
 }
 
 export const PROVEEDOR_CATALOGO = Symbol('ProveedorDeCatalogo');

@@ -1,13 +1,25 @@
 import { randomUUID } from 'node:crypto';
 
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import type { DecisionCierre, RegistroAceptado, RegistroEntrada, Ronda } from '@cci/contracts';
+import type {
+  ArticuloDeTrabajo,
+  DecisionCierre,
+  EvidenciaEntrada,
+  RegistroAceptado,
+  RegistroEntrada,
+  Ronda,
+} from '@cci/contracts';
 import type postgres from 'postgres';
 
 import { conexion } from '../../platform/db/cliente';
 import { PROVEEDOR_CATALOGO, type ProveedorDeCatalogo } from '../../platform/dominio/catalogo';
 import { EVENT_BUS, type EventBus } from '../../platform/eventos/bus';
 import { desfaseReloj, insertarIdempotente } from '../../platform/idempotencia/idempotencia';
+import { type Resultado, type Veredicto, validar } from './validacion';
+
+/** Los dos veredictos que dejan una alerta abierta. */
+const esAlerta = (v: Veredicto | null): boolean =>
+  v === 'alerta_unidad' || v === 'alerta_discrepancia';
 
 /**
  * H1-01 · El dominio `captura`.
@@ -79,20 +91,42 @@ export class RondaService {
       throw new NotFoundException({ codigo: 'ARTICULO_NO_ENCONTRADO', mensaje: 'El artículo no pertenece a la bodega.' });
     }
 
-    // ⚠️ Se lee el saldo, pero SOLO para congelarlo en la fila. No vuelve al
-    // cliente por ningún camino (FR-1.18); la prueba E2 lo verifica.
+    // ⚠️ Se lee el saldo, pero SOLO para congelarlo en la fila y compararlo
+    // aquí dentro. No vuelve al cliente por ningún camino (FR-1.18); la prueba
+    // E2 lo verifica recorriendo cada respuesta valor por valor.
     const ctx = await this.catalogo.contextoDeValidacion(ronda.bodega_id, entrada.articuloId);
 
     return conexion().begin(async (trx) => {
+      let veredicto: Resultado | undefined;
+
       const resultado = await insertarIdempotente(trx, {
         tabla: 'registro_conteo',
         clave: entrada.claveIdempotencia,
-        insertar: (t) => this.insertar(t, ronda, entrada, ctx),
+        insertar: async (t) => {
+          const fila = await this.insertar(t, ronda, entrada, articulo, ctx);
+          if (!fila) return undefined;
+          veredicto = fila.veredicto;
+          return { id: fila.id, secuencia: fila.secuencia, recibido_en: fila.recibido_en };
+        },
         recuperar: async (t) => {
-          const f = await t<{ id: string; secuencia: number; recibido_en: Date }[]>`
-            SELECT id, secuencia, recibido_en FROM registro_conteo
+          const f = await t<
+            { id: string; secuencia: number; recibido_en: Date; resultado_validacion: Veredicto | null }[]
+          >`
+            SELECT id, secuencia, recibido_en, resultado_validacion FROM registro_conteo
             WHERE clave_idempotencia = ${entrada.claveIdempotencia}`;
-          return f[0];
+          // El reintento debe ver el MISMO veredicto que la primera vez, y el
+          // guardado es la única fuente que no puede haber cambiado desde
+          // entonces. Recalcularlo aquí lo expondría a una tolerancia que el
+          // Administrador pudo haber tocado en el intervalo (FR-8.2).
+          const g = f[0];
+          if (!g) return undefined;
+
+          veredicto = {
+            veredicto: g.resultado_validacion ?? 'no_validable',
+            toleranciaAplicada: null,
+            esAlerta: esAlerta(g.resultado_validacion),
+          };
+          return { id: g.id, secuencia: g.secuencia, recibido_en: g.recibido_en };
         },
       });
 
@@ -114,11 +148,69 @@ export class RondaService {
         });
       }
 
+      const v = veredicto ?? { veredicto: 'no_validable' as const, toleranciaAplicada: null, esAlerta: false };
+
       return {
         registroId: resultado.valor.id,
         secuencia: resultado.valor.secuencia,
         recibidoEn: resultado.valor.recibido_en.toISOString(),
+        validacion: {
+          resultado: v.veredicto,
+          // Solo en la alerta de unidad. Es catálogo, no saldo (FR-2.1).
+          unidadCorrecta: v.veredicto === 'alerta_unidad' ? articulo.unidadEsperada : null,
+          // La evidencia se debe cuando el operario decidió sostener su conteo
+          // frente a una alerta. Si la alerta sigue sin responder, todavía no
+          // hay nada que respaldar: hay una pregunta abierta.
+          exigeEvidencia: v.esAlerta && entrada.confirmaPeseAAlerta,
+        },
       };
+    });
+  }
+
+  /**
+   * H2-05 · Adjunta la evidencia de audio a un conteo advertido (FR-2.4).
+   *
+   * Es una fila nueva, no un UPDATE: el registro ya se le confirmó al operario
+   * y es inmutable. La subida es diferida (D-07) — el audio puede aterrizar
+   * minutos después, cuando vuelva la red.
+   */
+  async adjuntarEvidencia(
+    rondaId: string,
+    operadorId: string,
+    registroId: string,
+    entrada: EvidenciaEntrada,
+  ) {
+    await this.rondaAbiertaDe(rondaId, operadorId);
+
+    return conexion().begin(async (trx) => {
+      const [reg] = await trx<{ advertido: boolean }[]>`
+        SELECT advertido FROM registro_conteo
+        WHERE id = ${registroId} AND ronda_id = ${rondaId}`;
+
+      if (!reg) {
+        throw new NotFoundException({ codigo: 'REGISTRO_NO_ENCONTRADO', mensaje: 'Registro no disponible.' });
+      }
+      // Aceptar evidencia de un conteo sin alerta llenaría el bucket de audio
+      // que nadie va a escuchar y diluiría el valor de la marca.
+      if (!reg.advertido) {
+        throw new BadRequestException({
+          codigo: 'REGISTRO_SIN_ADVERTENCIA',
+          mensaje: 'Este conteo no fue confirmado pese a una alerta; no requiere evidencia.',
+        });
+      }
+
+      const evidenciaId = randomUUID();
+      await trx`
+        INSERT INTO evidencia_audio (id, clave_s3)
+        VALUES (${evidenciaId}, ${entrada.claveS3})`;
+
+      // Un solo audio por registro: la PK lo impone y el reintento es inocuo.
+      await trx`
+        INSERT INTO evidencia_registro (registro_id, evidencia_id)
+        VALUES (${registroId}, ${evidenciaId})
+        ON CONFLICT (registro_id) DO NOTHING`;
+
+      return { registroId, adjuntada: true };
     });
   }
 
@@ -126,8 +218,9 @@ export class RondaService {
     trx: postgres.TransactionSql,
     ronda: { id: string; bodega_id: string },
     entrada: RegistroEntrada,
-    ctx: { saldoEsperado: number | null; toleranciaMerma: number | null },
-  ): Promise<{ id: string; secuencia: number; recibido_en: Date } | undefined> {
+    articulo: ArticuloDeTrabajo,
+    ctx: { saldoEsperado: string | null; toleranciaMerma: string | null },
+  ): Promise<{ id: string; secuencia: number; recibido_en: Date; veredicto: Resultado } | undefined> {
     // La secuencia se calcula DENTRO de la transacción, sobre la fila máxima
     // actual. Es lo que hace que una corrección supersede en vez de sobrescribir
     // (D4) sin necesitar un UPDATE, que además está revocado en el motor.
@@ -138,8 +231,14 @@ export class RondaService {
     // recibiría un 409 en vez de su respuesta original — y el dispositivo, que
     // reintenta precisamente porque no supo si llegó, lo reintentaría para
     // siempre.
-    const previo = await trx<{ maxima: number | null; total: number }[]>`
-      SELECT max(secuencia) AS maxima, count(*)::int AS total
+    const previo = await trx<{ maxima: number | null; total: number; verificados: number }[]>`
+      SELECT max(secuencia) AS maxima,
+             count(*)::int AS total,
+             -- Cuántas veces se le respondió ya sobre este artículo. Es el
+             -- contador que agota el oráculo de la alerta (MAX_VERIFICACIONES).
+             count(*) FILTER (
+               WHERE resultado_validacion IN ('aceptado', 'alerta_unidad', 'alerta_discrepancia')
+             )::int AS verificados
       FROM registro_conteo
       WHERE ronda_id = ${ronda.id} AND articulo_id = ${entrada.articuloId}
         AND clave_idempotencia <> ${entrada.claveIdempotencia}`;
@@ -148,7 +247,11 @@ export class RondaService {
 
     // FR-1.14: volver a registrar un artículo ya contado exige confirmación
     // explícita, y NO suma. La cantidad declarada es el total del producto.
-    if (yaContado && !entrada.confirmaCorreccion) {
+    //
+    // Sostener el conteo frente a una alerta cuenta como esa confirmación: es
+    // igual de explícito, y exigir las dos banderas a la vez solo enseñaría al
+    // operario a marcarlas ambas sin leerlas.
+    if (yaContado && !entrada.confirmaCorreccion && !entrada.confirmaPeseAAlerta) {
       throw new ConflictException({
         codigo: 'ARTICULO_YA_CONTADO',
         mensaje: 'Este artículo ya fue contado en esta ronda. Confirme la corrección para reemplazar el valor.',
@@ -157,21 +260,39 @@ export class RondaService {
 
     const secuencia = (previo[0]?.maxima ?? 0) + 1;
 
+    // La validación ocurre AQUÍ, en el servidor y dentro de la transacción que
+    // guarda el dato (FR-2.5). No en el dispositivo, que podría mentir, ni
+    // después, cuando el operario ya se movió de estante.
+    const veredicto = validar({
+      estado: entrada.estado,
+      cantidad: entrada.cantidad === null ? null : entrada.cantidad.toFixed(3),
+      unidadId: entrada.unidadId,
+      unidadEsperadaId: articulo.unidadEsperada.id,
+      esPeso: articulo.unidadEsperada.esPeso,
+      saldoEsperado: ctx.saldoEsperado,
+      toleranciaMerma: ctx.toleranciaMerma,
+      verificacionesPrevias: previo[0]?.verificados ?? 0,
+    });
+
+    // La marca de advertencia solo existe si hubo alerta Y el operario la
+    // sostuvo. Es la condición que la base también verifica.
+    const advertido = veredicto.esAlerta && entrada.confirmaPeseAAlerta;
+
     const filas = await trx<{ id: string; secuencia: number; recibido_en: Date }[]>`
       INSERT INTO registro_conteo
         (id, ronda_id, articulo_id, secuencia, estado, cantidad, unidad_id,
-         saldo_esperado_congelado, tolerancia_aplicada,
+         saldo_esperado_congelado, tolerancia_aplicada, resultado_validacion,
          modo_captura, origen_parse, origen_nombre,
          capturado_en, clave_idempotencia, advertido)
       VALUES (${randomUUID()}, ${ronda.id}, ${entrada.articuloId}, ${secuencia},
               ${entrada.estado}, ${entrada.cantidad}, ${entrada.unidadId},
-              ${ctx.saldoEsperado}, ${ctx.toleranciaMerma},
+              ${ctx.saldoEsperado}, ${veredicto.toleranciaAplicada}, ${veredicto.veredicto},
               ${entrada.modoCaptura}, ${entrada.origenParse}, ${entrada.origenNombre},
-              ${entrada.capturadoEn}, ${entrada.claveIdempotencia}, ${entrada.confirmaPeseAAlerta})
+              ${entrada.capturadoEn}, ${entrada.claveIdempotencia}, ${advertido})
       ON CONFLICT (clave_idempotencia) DO NOTHING
       RETURNING id, secuencia, recibido_en`;
 
-    return filas[0];
+    return filas[0] && { ...filas[0], veredicto };
   }
 
   /**
@@ -196,7 +317,27 @@ export class RondaService {
         )
       ORDER BY a.nombre`;
 
-    return { pendientes: filas.map((f) => ({ articuloId: f.id, nombre: f.nombre, codigo: f.codigo })) };
+    // Lo que impide cerrar, dicho antes de intentarlo. Sale de la MISMA vista
+    // que aplica el bloqueo, así que la pantalla no puede prometer un cierre
+    // que el servidor vaya a rechazar.
+    const bloqueos = await conexion()<
+      { articulo_id: string; nombre: string; registro_id: string; motivo: string }[]
+    >`
+      SELECT p.articulo_id, a.nombre, p.registro_id, p.motivo
+      FROM pendiente_de_resolver p
+      JOIN articulo a ON a.id = p.articulo_id
+      WHERE p.ronda_id = ${rondaId}
+      ORDER BY a.nombre`;
+
+    return {
+      pendientes: filas.map((f) => ({ articuloId: f.id, nombre: f.nombre, codigo: f.codigo })),
+      bloqueos: bloqueos.map((b) => ({
+        articuloId: b.articulo_id,
+        nombre: b.nombre,
+        registroId: b.registro_id,
+        motivo: b.motivo,
+      })),
+    };
   }
 
   /** Cierra la ronda. Ningún artículo puede quedar en estado indefinido (FR-1.11). */
@@ -205,15 +346,51 @@ export class RondaService {
 
     return conexion().begin(async (trx) => {
       for (const d of decisiones) {
+        // `contado_en_cero` es una afirmación sobre el estante —"fui, miré, no
+        // había"— y por eso se valida igual que cualquier cantidad (FR-2.7,
+        // escenario 9). Un artículo con saldo esperado de 40 que se declara en
+        // cero es exactamente la discrepancia que este sistema existe para
+        // encontrar. `no_contado` no afirma nada y no se valida.
+        const cero = d.estado === 'contado_en_cero';
+        const articulo = cero ? await this.catalogo.buscar(ronda.bodega_id, d.articuloId) : null;
+        const ctx = articulo
+          ? await this.catalogo.contextoDeValidacion(ronda.bodega_id, d.articuloId)
+          : { saldoEsperado: null, toleranciaMerma: null };
+
+        const veredicto = articulo
+          ? validar({
+              estado: 'contado_en_cero',
+              cantidad: '0',
+              unidadId: articulo.unidadEsperada.id,
+              unidadEsperadaId: articulo.unidadEsperada.id,
+              esPeso: articulo.unidadEsperada.esPeso,
+              ...ctx,
+              verificacionesPrevias: 0,
+            })
+          : { veredicto: 'no_validable' as const, toleranciaAplicada: null, esAlerta: false };
+
+        // Elegir *contado en cero* en el cuadre YA ES la confirmación explícita.
+        // La pantalla preguntó, en ese mismo momento, si el estante estaba
+        // vacío o si el artículo quedaba fuera del alcance; quien respondió lo
+        // primero afirmó sobre la realidad física a sabiendas.
+        //
+        // Sin esto la ronda quedaría imposible de cerrar: la alerta nacería
+        // dentro de la transacción del cierre, el cierre se bloquearía por su
+        // causa, la transacción revertiría —y la alerta que lo bloqueó dejaría
+        // de existir—. El operario intentaría cerrar para siempre.
+        const advertido = veredicto.esAlerta;
+
         await trx`
           INSERT INTO registro_conteo
             (id, ronda_id, articulo_id, secuencia, estado, cantidad, unidad_id,
-             modo_captura, origen_parse, capturado_en, clave_idempotencia)
+             saldo_esperado_congelado, tolerancia_aplicada, resultado_validacion,
+             modo_captura, origen_parse, capturado_en, clave_idempotencia, advertido)
           SELECT ${randomUUID()}, ${rondaId}, ${d.articuloId},
                  COALESCE(max(secuencia), 0) + 1, ${d.estado},
-                 ${d.estado === 'contado_en_cero' ? 0 : null},
-                 ${d.estado === 'contado_en_cero' ? trx`(SELECT unidad_esperada_id FROM articulo WHERE id = ${d.articuloId})` : null},
-                 'texto', 'manual', now(), ${d.claveIdempotencia}
+                 ${cero ? 0 : null},
+                 ${articulo ? articulo.unidadEsperada.id : null},
+                 ${ctx.saldoEsperado}, ${veredicto.toleranciaAplicada}, ${veredicto.veredicto},
+                 'texto', 'manual', now(), ${d.claveIdempotencia}, ${advertido}
           FROM registro_conteo
           WHERE ronda_id = ${rondaId} AND articulo_id = ${d.articuloId}
           ON CONFLICT (clave_idempotencia) DO NOTHING`;
@@ -232,6 +409,30 @@ export class RondaService {
         throw new BadRequestException({
           codigo: 'CUADRE_INCOMPLETO',
           mensaje: `Quedan ${sinResolver[0]!.n} artículos sin decidir entre contado en cero y no contado.`,
+        });
+      }
+
+      // FR-2.8 · Una alerta sin responder al cerrar es un error que ya nadie va
+      // a poder explicar: el operario se fue, el estante cambió, y lo único que
+      // quedaría es un número que el sistema sabía dudoso y dejó pasar.
+      //
+      // La condición sale de la vista `pendiente_de_resolver`, la misma que el
+      // cuadre muestra. Reescribirla aquí sería tener dos versiones de la regla
+      // que un día dejarían de coincidir.
+      const pendientes = await trx<{ motivo: string; n: number }[]>`
+        SELECT motivo, count(*)::int n FROM pendiente_de_resolver
+        WHERE ronda_id = ${rondaId} GROUP BY motivo`;
+
+      if (pendientes.length > 0) {
+        const alertas = pendientes.find((p) => p.motivo === 'alerta_sin_responder')?.n ?? 0;
+        const evidencias = pendientes.find((p) => p.motivo === 'evidencia_faltante')?.n ?? 0;
+
+        throw new BadRequestException({
+          codigo: alertas > 0 ? 'ALERTAS_SIN_RESOLVER' : 'EVIDENCIA_PENDIENTE',
+          mensaje: alertas > 0
+            ? `Quedan ${alertas} alertas sin responder. Corrija el conteo o confírmelo.`
+            : `Quedan ${evidencias} conteos confirmados pese a una alerta sin su evidencia de audio.`,
+          detalles: { alertasSinResponder: alertas, evidenciaFaltante: evidencias },
         });
       }
 

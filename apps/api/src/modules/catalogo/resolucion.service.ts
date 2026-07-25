@@ -166,11 +166,11 @@ export class ResolucionService implements ProveedorDeCatalogo {
   async contextoDeValidacion(
     bodegaId: string,
     articuloId: string,
-  ): Promise<{ saldoEsperado: number | null; toleranciaMerma: number | null; esPeso: boolean }> {
+  ): Promise<{ saldoEsperado: string | null; toleranciaMerma: string | null }> {
     const filas = await conexion()<
-      { cantidad: string | null; porcentaje: string | null; es_peso: boolean }[]
+      { cantidad: string | null; porcentaje: string | null }[]
     >`
-      SELECT s.cantidad, cm.porcentaje, u.es_peso
+      SELECT s.cantidad, cm.porcentaje
       FROM articulo a
       JOIN unidad_medida u ON u.id = a.unidad_esperada_id
       LEFT JOIN saldo_esperado s ON s.articulo_id = a.id AND s.bodega_id = ${bodegaId}
@@ -179,15 +179,12 @@ export class ResolucionService implements ProveedorDeCatalogo {
       LIMIT 1`;
 
     const f = filas[0];
-    if (!f) return { saldoEsperado: null, toleranciaMerma: null, esPeso: false };
+    if (!f) return { saldoEsperado: null, toleranciaMerma: null };
 
-    return {
-      saldoEsperado: f.cantidad === null ? null : Number(f.cantidad),
-      // La merma solo aplica a unidades de peso (FR-2.3). `Liter` queda fuera
-      // hasta que el negocio lo confirme — no se asume.
-      toleranciaMerma: f.es_peso && f.porcentaje !== null ? Number(f.porcentaje) : null,
-      esPeso: f.es_peso,
-    };
+    // Se devuelven los decimales SIN tocar. Quién aplica la merma y a qué
+    // unidades es una regla del dominio `captura`, no del catálogo: filtrarla
+    // aquí la escondería en la capa que solo debía leerla.
+    return { saldoEsperado: f.cantidad, toleranciaMerma: f.porcentaje };
   }
 
   private aArticulo(f: FilaCandidata): ArticuloDeTrabajo {
