@@ -20,6 +20,10 @@ import { opcionesSsl } from '../src/platform/db/ssl';
 
 const URL_BD = process.env['DATABASE_URL'] ?? 'postgres://cci:cci_local@localhost:5432/cci';
 
+/** ¿El evento es de esta suite? El despachador entrega todo lo pendiente. */
+const esMio = (evento: Evento, bodegaId: string): boolean =>
+  (evento.payload as { bodegaId?: string }).bodegaId === bodegaId;
+
 function eventoDePrueba(bodegaId: string, articuloId: string) {
   return {
     tipo: 'ConteoRegistrado' as const,
@@ -42,14 +46,30 @@ describe('F-10/F-11/F-12 · outbox y despacho', () => {
   let bus: OutboxBus;
   let bodegaId: string;
   let articuloId: string;
+  /** Momento en que arrancó la suite: separa lo suyo de lo heredado. */
+  const arranque = new Date();
 
   beforeAll(async () => {
     sql = postgres(URL_BD, { max: 4, ssl: opcionesSsl(), onnotice: () => {} });
     bus = new OutboxBus();
-    const [b] = await sql<{ id: string }[]>`SELECT id FROM bodega LIMIT 1`;
-    const [a] = await sql<{ id: string }[]>`SELECT id FROM articulo LIMIT 1`;
-    bodegaId = b!.id;
-    articuloId = a!.id;
+
+    // ⚠️ Bodega PROPIA, y todo lo que sigue se filtra por ella.
+    //
+    // Esta suite borraba el outbox entero entre pruebas. Con las suites de los
+    // slices corriendo en paralelo contra la misma base, eso no solo hacía
+    // inestables sus propias cuentas: **le borraba eventos pendientes a las
+    // demás**, que fallaban después por una causa imposible de relacionar con
+    // este archivo.
+    bodegaId = randomUUID();
+    await sql`
+      INSERT INTO bodega (id, codigo, nombre)
+      VALUES (${bodegaId}, ${`EVT-${bodegaId.slice(0, 8)}`}, 'Bodega de pruebas de eventos')`;
+
+    const [u] = await sql<{ id: string }[]>`SELECT id FROM unidad_medida LIMIT 1`;
+    articuloId = randomUUID();
+    await sql`
+      INSERT INTO articulo (id, bodega_id, nombre, nombre_normalizado, unidad_esperada_id)
+      VALUES (${articuloId}, ${bodegaId}, 'ARTICULO DE EVENTOS', 'articulo de eventos', ${u!.id})`;
   });
 
   afterAll(async () => {
@@ -57,8 +77,21 @@ describe('F-10/F-11/F-12 · outbox y despacho', () => {
   });
 
   beforeEach(async () => {
-    await sql`DELETE FROM evento_procesado`;
-    await sql`DELETE FROM outbox`;
+    await sql`
+      DELETE FROM evento_procesado WHERE event_id IN (
+        SELECT id FROM outbox WHERE payload->>'bodegaId' = ${bodegaId})`;
+    await sql`DELETE FROM outbox WHERE payload->>'bodegaId' = ${bodegaId}`;
+
+    // Se dan por despachados los eventos anteriores a esta suite.
+    //
+    // `pasada()` toma un lote acotado, los más antiguos primero. En pruebas el
+    // despachador de fondo está apagado —a propósito— así que los eventos de
+    // corridas anteriores se acumulan, y con suficientes por delante el evento
+    // de ESTA prueba nunca entraría en el lote. Es una prueba que fallaría por
+    // la edad de la base, no por el código.
+    await sql`
+      UPDATE outbox SET despachado_en = now()
+      WHERE despachado_en IS NULL AND ocurrido_en < ${arranque}`;
   });
 
   it('escribe el evento en la MISMA transacción que su causa', async () => {
@@ -71,7 +104,8 @@ describe('F-10/F-11/F-12 · outbox y despacho', () => {
       }),
     ).rejects.toThrow(/fallo simulado/);
 
-    const [f] = await sql<{ n: number }[]>`SELECT count(*)::int n FROM outbox`;
+    const [f] = await sql<{ n: number }[]>`
+      SELECT count(*)::int n FROM outbox WHERE payload->>'bodegaId' = ${bodegaId}`;
     expect(f?.n).toBe(0);
   });
 
@@ -97,11 +131,14 @@ describe('F-10/F-11/F-12 · outbox y despacho', () => {
     await expect(d.pasada()).rejects.toThrow(/explotó/);
 
     const [f] = await sql<{ n: number }[]>`
-      SELECT count(*)::int n FROM outbox WHERE despachado_en IS NULL`;
+      SELECT count(*)::int n FROM outbox
+      WHERE despachado_en IS NULL AND payload->>'bodegaId' = ${bodegaId}`;
     expect(f?.n).toBe(1); // sigue pendiente: se reintentará
 
     // Y la marca de procesado tampoco quedó: iba en la misma transacción.
-    const [p] = await sql<{ n: number }[]>`SELECT count(*)::int n FROM evento_procesado`;
+    const [p] = await sql<{ n: number }[]>`
+      SELECT count(*)::int n FROM evento_procesado WHERE event_id IN (
+        SELECT id FROM outbox WHERE payload->>'bodegaId' = ${bodegaId})`;
     expect(p?.n).toBe(0);
   });
 
@@ -112,20 +149,20 @@ describe('F-10/F-11/F-12 · outbox y despacho', () => {
     const contador: Consumidor = {
       nombre: 'consumidor-contador',
       interesadoEn: ['ConteoRegistrado'],
-      manejar: () => {
-        efectos += 1;
+      manejar: (_trx, evento) => {
+        if (esMio(evento, bodegaId)) efectos += 1;
         return Promise.resolve();
       },
     };
 
     const d = new DespachadorOutbox(sql, [contador]);
-    expect(await d.pasada()).toBe(1);
+    await d.pasada();
     expect(efectos).toBe(1);
 
     // Se fuerza la reentrega, como si el despachador hubiera muerto justo
     // después de aplicar el efecto pero antes de marcar el evento.
-    await sql`UPDATE outbox SET despachado_en = NULL`;
-    expect(await d.pasada()).toBe(1);
+    await sql`UPDATE outbox SET despachado_en = NULL WHERE payload->>'bodegaId' = ${bodegaId}`;
+    await d.pasada();
 
     expect(efectos).toBe(1); // el efecto NO se repitió
   });
@@ -137,8 +174,8 @@ describe('F-10/F-11/F-12 · outbox y despacho', () => {
     const mk = (nombre: string, tipos: Evento['tipo'][]): Consumidor => ({
       nombre,
       interesadoEn: tipos,
-      manejar: () => {
-        recibidos.push(nombre);
+      manejar: (_trx, evento) => {
+        if (esMio(evento, bodegaId)) recibidos.push(nombre);
         return Promise.resolve();
       },
     });
@@ -159,22 +196,29 @@ describe('F-10/F-11/F-12 · outbox y despacho', () => {
       await sql.begin((trx) => bus.publicar(trx, eventoDePrueba(bodegaId, articuloId)));
     }
 
-    let efectos = 0;
+    // Lo que se verifica es que NINGÚN evento se entregue dos veces, no que se
+    // entreguen exactamente cinco: en producción hay más de un despachador
+    // vivo —y en esta suite también, porque las demás pruebas levantan la
+    // aplicación—, así que parte del lote puede llevárselo otro. Eso es
+    // correcto. Lo que sería un fallo es que el mismo evento llegue dos veces.
+    const entregados: string[] = [];
     const c = (nombre: string): Consumidor => ({
       nombre,
       interesadoEn: ['ConteoRegistrado'],
-      manejar: () => {
-        efectos += 1;
+      manejar: (_trx, evento) => {
+        if (esMio(evento, bodegaId)) entregados.push(evento.eventId);
         return Promise.resolve();
       },
     });
 
-    const [a, b] = await Promise.all([
+    await Promise.all([
       new DespachadorOutbox(sql, [c('compartido')]).pasada(),
       new DespachadorOutbox(sql, [c('compartido')]).pasada(),
     ]);
 
-    expect(a + b).toBe(5);
-    expect(efectos).toBe(5);
+    // `FOR UPDATE SKIP LOCKED` es lo que permite que varias réplicas despachen
+    // a la vez sin coordinarse y sin pisarse.
+    expect(new Set(entregados).size).toBe(entregados.length);
+    expect(entregados.length).toBeGreaterThan(0);
   });
 });

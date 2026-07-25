@@ -215,12 +215,12 @@ Cada slice atraviesa datos → dominio → API → UI → pruebas, y termina en 
 
 ### Slice 8 — Administración de mermas (P8)
 
-| # | Tarea |
-|---|---|
-| H8-01 | Panel exclusivo del Administrador |
-| H8-02 | Historial de cambios con autor y momento |
-| H8-03 | Validación de valores; cero es válido |
-| H8-04 | Invalidación de la caché de tolerancias en Redis |
+| # | Tarea | Estado |
+|---|---|---|
+| H8-01 | Panel exclusivo del Administrador | ✅ `/administracion/mermas`, solo Administrador (Operador y Auditor → 403) |
+| H8-02 | Historial de cambios con autor y momento | ✅ historial con autor y momento; conserva los valores anteriores |
+| H8-03 | Validación de valores; cero es válido | ✅ cero válido; negativo y >25% rechazados; avisa si la unidad no es de peso |
+| H8-04 | Invalidación de la caché de tolerancias en Redis | ✅ invalidación explícita; la tolerancia se lee de caché en la ruta caliente |
 
 ### Slice 9 — Modo consulta del supervisor (extra)
 

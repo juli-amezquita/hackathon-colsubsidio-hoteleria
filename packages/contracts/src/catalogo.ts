@@ -51,3 +51,15 @@ export const ResolucionArticuloSchema = z.object({
   candidatos: z.array(CandidatoSchema),
 });
 export type ResolucionArticulo = z.infer<typeof ResolucionArticuloSchema>;
+
+/**
+ * H8-03 · El cambio de tolerancia (FR-8.4).
+ *
+ * Cero es explícitamente válido: significa que cualquier diferencia alerta. El
+ * techo lo impone el servidor, que es donde vive la regla de qué es
+ * desproporcionado.
+ */
+export const ToleranciaEntradaSchema = z.object({
+  porcentaje: z.number().min(0).max(1),
+});
+export type ToleranciaEntrada = z.infer<typeof ToleranciaEntradaSchema>;

@@ -3,6 +3,7 @@ import { normalizar } from '@cci/gramatica';
 import type { ArticuloDeTrabajo, ResolucionArticulo } from '@cci/contracts';
 
 import { Cache, CLAVES } from '../../platform/cache/cache';
+import { MermasService } from './mermas.service';
 import { conexion } from '../../platform/db/cliente';
 import type { ProveedorDeCatalogo } from '../../platform/dominio/catalogo';
 
@@ -55,7 +56,10 @@ interface FilaCandidata {
 export class ResolucionService implements ProveedorDeCatalogo {
   // Token explícito: esbuild no emite `design:paramtypes`, así que la inyección
   // por tipo funciona compilada con tsc y falla bajo vitest. Ver identidad.controller.ts.
-  constructor(@Inject(Cache) private readonly cache: Cache) {}
+  constructor(
+    @Inject(Cache) private readonly cache: Cache,
+    @Inject(MermasService) private readonly mermas: MermasService,
+  ) {}
 
   async resolver(bodegaId: string, textoDictado: string): Promise<ResolucionArticulo> {
     const objetivo = normalizar(textoDictado);
@@ -203,16 +207,18 @@ export class ResolucionService implements ProveedorDeCatalogo {
     bodegaId: string,
     articuloId: string,
   ): Promise<{ saldoEsperado: string | null; toleranciaMerma: string | null }> {
-    const filas = await conexion()<
-      { cantidad: string | null; porcentaje: string | null }[]
-    >`
-      SELECT s.cantidad, cm.porcentaje
-      FROM articulo a
-      JOIN unidad_medida u ON u.id = a.unidad_esperada_id
-      LEFT JOIN saldo_esperado s ON s.articulo_id = a.id AND s.bodega_id = ${bodegaId}
-      LEFT JOIN configuracion_merma cm ON cm.unidad_id = u.id
-      WHERE a.id = ${articuloId} AND a.bodega_id = ${bodegaId}
-      LIMIT 1`;
+    // La tolerancia sale de la caché, no de este JOIN: son cuatro filas que
+    // cambian una vez cada varios meses y se consultan en CADA conteo. El
+    // saldo sí se lee siempre, porque es por artículo y por bodega.
+    const [filas, tolerancias] = await Promise.all([
+      conexion()<{ cantidad: string | null; unidad_esperada_id: string }[]>`
+        SELECT s.cantidad, a.unidad_esperada_id
+        FROM articulo a
+        LEFT JOIN saldo_esperado s ON s.articulo_id = a.id AND s.bodega_id = ${bodegaId}
+        WHERE a.id = ${articuloId} AND a.bodega_id = ${bodegaId}
+        LIMIT 1`,
+      this.mermas.tolerancias(),
+    ]);
 
     const f = filas[0];
     if (!f) return { saldoEsperado: null, toleranciaMerma: null };
@@ -220,7 +226,7 @@ export class ResolucionService implements ProveedorDeCatalogo {
     // Se devuelven los decimales SIN tocar. Quién aplica la merma y a qué
     // unidades es una regla del dominio `captura`, no del catálogo: filtrarla
     // aquí la escondería en la capa que solo debía leerla.
-    return { saldoEsperado: f.cantidad, toleranciaMerma: f.porcentaje };
+    return { saldoEsperado: f.cantidad, toleranciaMerma: tolerancias[f.unidad_esperada_id] ?? null };
   }
 
   private aArticulo(f: FilaCandidata): ArticuloDeTrabajo {

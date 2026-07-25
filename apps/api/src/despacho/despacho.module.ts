@@ -6,6 +6,7 @@ import {
   type OnApplicationShutdown,
 } from '@nestjs/common';
 
+import { config } from '../config';
 import { ConsolidacionModule } from '../modules/consolidacion/consolidacion.module';
 import { ConsolidacionService } from '../modules/consolidacion/consolidacion.service';
 import { conexion } from '../platform/db/cliente';
@@ -42,7 +43,18 @@ export class DespachadorService implements OnApplicationBootstrap, OnApplication
 
   onApplicationBootstrap(): void {
     this.despachador = new DespachadorOutbox(conexion(), this.consumidores);
-    this.despachador.iniciar();
+
+    // En pruebas el despacho es EXPLÍCITO, nunca por temporizador.
+    //
+    // Cada suite levanta su propia aplicación contra la misma base, así que un
+    // despachador de fondo por suite compite por los eventos de las demás:
+    // `SKIP LOCKED` funciona —ese es el punto— pero una prueba que espera ver
+    // su evento pendiente lo encuentra ya procesado por otro proceso, y falla
+    // por una causa que no tiene nada que ver con lo que estaba probando.
+    //
+    // El temporizador no cubre nada que `pasada()` no cubra: lo único que
+    // añade es cuándo se llama.
+    if (config().NODE_ENV !== 'test') this.despachador.iniciar();
   }
 
   onApplicationShutdown(): void {
