@@ -222,6 +222,18 @@ Cada slice atraviesa datos → dominio → API → UI → pruebas, y termina en 
 | H8-03 | Validación de valores; cero es válido | ✅ cero válido; negativo y >25% rechazados; avisa si la unidad no es de peso |
 | H8-04 | Invalidación de la caché de tolerancias en Redis | ✅ invalidación explícita; la tolerancia se lee de caché en la ruta caliente |
 
+### Aprendizaje — el sistema mirándose a sí mismo (extra, fuera del plan original)
+
+| # | Tarea | Estado |
+|---|---|---|
+| AP-01 | Señales publicadas por `captura` y `auditoria` (no tablas ajenas) | ✅ el error de captura separado de la diferencia real |
+| AP-02 | Propuestas deterministas: alias, gramática, confusión numérica, catálogo | ✅ función pura con 12 pruebas de criterio |
+| AP-03 | `GET /aprendizaje/reporte` — sin saldos, rol Auditor/Administrador | ✅ verificado en producción |
+| AP-04 | `POST /aprendizaje/alias` — una persona aprueba, con nombre y fecha | ✅ el alias resuelve desde el instante siguiente |
+| AP-05 | Keyterms del catálogo en la credencial de voz | ✅ 55 términos verificados en producción |
+
+**Demostrable**: tres operarios desambiguan lo mismo a mano, el sistema propone el alias con su evidencia, el Administrador lo aprueba y el nombre resuelve desde el instante siguiente.
+
 ### Slice 9 — Modo consulta del supervisor (extra)
 
 | # | Tarea |

@@ -6,6 +6,8 @@ import { ArbitroDeterminista } from '../../proveedores/arbitraje/determinista';
 import { PROVEEDOR_ARBITRAJE } from '../../proveedores/arbitraje/proveedor';
 import { AuditoriaController } from './auditoria.controller';
 import { AuditoriaService } from './auditoria.service';
+import { SENALES_AUDITORIA } from '../../platform/dominio/senales';
+import { SenalesAuditoriaService } from './senales.service';
 
 /**
  * Dominio `auditoria` — frontera dura (Principio III).
@@ -22,12 +24,14 @@ import { AuditoriaService } from './auditoria.service';
   controllers: [AuditoriaController],
   providers: [
     AuditoriaService,
+    SenalesAuditoriaService,
+    { provide: SENALES_AUDITORIA, useExisting: SenalesAuditoriaService },
     ArbitroDeterminista,
     {
       provide: PROVEEDOR_ARBITRAJE,
       useClass: config().PROVEEDOR_ARBITRAJE === 'anthropic' ? ArbitroAnthropic : ArbitroDeterminista,
     },
   ],
-  exports: [AuditoriaService],
+  exports: [AuditoriaService, SENALES_AUDITORIA],
 })
 export class AuditoriaModule {}

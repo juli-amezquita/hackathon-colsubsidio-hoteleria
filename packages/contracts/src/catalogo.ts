@@ -64,3 +64,17 @@ export const ToleranciaEntradaSchema = z.object({
   porcentaje: z.number().min(0).max(1),
 });
 export type ToleranciaEntrada = z.infer<typeof ToleranciaEntradaSchema>;
+
+/**
+ * Una propuesta de alias que una persona aprobó.
+ *
+ * Se manda el alias YA normalizado tal como lo trae el reporte: aceptar texto
+ * libre aquí abriría la puerta a que se guarde un alias que la resolución nunca
+ * va a encontrar, porque busca contra la forma normalizada.
+ */
+export const AliasAprobadoSchema = z.object({
+  bodegaId: IdSchema,
+  articuloId: IdSchema,
+  alias: z.string().trim().min(2),
+});
+export type AliasAprobado = z.infer<typeof AliasAprobadoSchema>;

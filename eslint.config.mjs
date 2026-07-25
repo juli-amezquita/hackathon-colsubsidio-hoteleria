@@ -3,7 +3,7 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 /** Los seis dominios del backend (Principio III). */
-const DOMINIOS = ['identidad', 'catalogo', 'captura', 'consolidacion', 'auditoria', 'integracion'];
+const DOMINIOS = ['identidad', 'catalogo', 'captura', 'consolidacion', 'auditoria', 'integracion', 'aprendizaje'];
 
 /**
  * S-09 · La frontera entre dominios la verifica la build, no la disciplina.
