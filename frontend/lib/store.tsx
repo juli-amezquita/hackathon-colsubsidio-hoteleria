@@ -27,7 +27,7 @@ import {
  * El estado del conteo, contra el backend real.
  *
  * La interfaz pública es la misma que tenía la versión con datos falsos —
- * `login`, `selectWarehouse`, `addEntry`, `submitCount`, `reviewItem`— para
+ * `login`, `selectWarehouse`, `addEntry`, `submitCount`— para
  * que las pantallas no cambien. Lo que cambia es de dónde salen los datos.
  *
  * ## Lo primero que se escribe es el disco, no la red (F-18, Restricción 2)
@@ -152,7 +152,6 @@ interface CountContextValue extends CountState {
   sostenerConteo: (entryId: string) => void
   submitCount: () => Promise<void>
   reopenCount: () => void
-  reviewItem: (warehouseId: string, entryId: string, review: Review) => Promise<void>
   clearWarehouse: (id: string) => void
 }
 
@@ -584,46 +583,6 @@ export function CountProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
-  /** El reconteo del Auditor. Exige causa del catálogo controlado (R4). */
-  const reviewItem = useCallback(
-    async (warehouseId: string, entryId: string, review: Review) => {
-      setState((s) => {
-        const wh = s.warehouses[warehouseId]
-        if (!wh) return s
-        return {
-          ...s,
-          warehouses: {
-            ...s.warehouses,
-            [warehouseId]: { ...wh, reviews: { ...wh.reviews, [entryId]: review } },
-          },
-        }
-      })
-
-      const entrada = state.warehouses[warehouseId]?.entries.find((e) => e.id === entryId)
-      if (!entrada || review.status !== 'corregido' || !review.codigoRazonId) return
-
-      // El reconteo puede corregir la unidad además de la cantidad; si el
-      // Auditor no la tocó, la del conteo original es la buena.
-      const unidadId =
-        review.auditorUnit === entrada.unit ? entrada.unidadId : idDeUnidad(review.auditorUnit)
-      if (!unidadId) {
-        setError('Esa unidad no existe en el catálogo de la bodega.')
-        return
-      }
-
-      try {
-        await api.recontar(warehouseId, entrada.articuloId, {
-          cantidad: review.auditorQuantity,
-          unidadId,
-          codigoRazonId: review.codigoRazonId,
-        })
-      } catch (e) {
-        setError(e instanceof Error ? e.message : 'No se pudo registrar el reconteo.')
-      }
-    },
-    [state.warehouses, idDeUnidad],
-  )
-
   /**
    * Un hallazgo: algo que está en el estante y no en el catálogo.
    *
@@ -726,13 +685,12 @@ export function CountProvider({ children }: { children: ReactNode }) {
       removeEntry,
       submitCount,
       reopenCount,
-      reviewItem,
       clearWarehouse,
     }),
     [
       state, active, catalogo, pendientes, error, ready, getWarehouse, login, logout,
       selectWarehouse, resolver, idDeUnidad, reportarHallazgo, alertasSinResponder, sostenerConteo, addEntry, updateEntry, removeEntry, submitCount,
-      reopenCount, reviewItem, clearWarehouse,
+      reopenCount, clearWarehouse,
     ],
   )
 

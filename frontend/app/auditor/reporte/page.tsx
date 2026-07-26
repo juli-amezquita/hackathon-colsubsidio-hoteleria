@@ -1,212 +1,288 @@
 'use client'
 
-import {
-  AlertTriangle,
-  ArrowDownToLine,
-  ArrowLeftRight,
-  Check,
-  ChevronLeft,
-  Copy,
-  FileSpreadsheet,
-  RotateCcw,
-} from 'lucide-react'
+import { AlertTriangle, ArrowDownToLine, CheckCircle2, Eye, Loader2, Lock, Search } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
+
 import { RequireRole } from '@/components/require-role'
+import { TextField } from '@/components/text-field'
 import { TopBar } from '@/components/top-bar'
 import { Button } from '@/components/ui-button'
-import { buildCsv, buildReportRows, downloadCsv } from '@/lib/export'
-import { formatUnit } from '@/lib/inventory'
+import * as api from '@/lib/api'
+import { leerMotivo } from '@/lib/auditoria'
+import { normalizeName } from '@/lib/inventory'
 import { useCountStore } from '@/lib/store'
 import { cn } from '@/lib/utils'
 
 export default function AuditorReportPage() {
   return (
     <RequireRole role="auditor">
-      <AuditorReport />
+      <Cierre />
     </RequireRole>
   )
 }
 
-function AuditorReport() {
+/**
+ * El consolidado de la bodega y su cierre.
+ *
+ * Enseña la comparación completa —lo que el sistema tenía frente a lo que la
+ * gente encontró— y es el único sitio del producto donde se puede pulsar algo
+ * que **mueve la tabla madre**.
+ *
+ * Hasta aquí ningún conteo la ha tocado: el libro solo acumula afirmaciones
+ * (D8). El saldo se mueve con el aval del Auditor, en el cierre y no antes
+ * (FR-7.9). Por eso el botón dice lo que hace en vez de preguntar "¿estás
+ * seguro?": nadie decide mejor porque le pregunten dos veces; decide mejor si
+ * sabe qué va a pasar.
+ */
+function Cierre() {
   const router = useRouter()
-  const { ready, activeWarehouseId, active, clearWarehouse, getWarehouse } = useCountStore()
-  const [downloaded, setDownloaded] = useState(false)
-
+  const { ready, activeWarehouseId, getWarehouse } = useCountStore()
   const warehouse = getWarehouse(activeWarehouseId)
-  const rows = useMemo(
-    () => (active ? buildReportRows(active.entries, active.reviews) : []),
-    [active],
-  )
+
+  const [items, setItems] = useState<api.ItemConsolidado[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const [confirmando, setConfirmando] = useState(false)
+  const [cerrando, setCerrando] = useState(false)
+  const [cerrado, setCerrado] = useState<{ articulosActualizados: number } | null>(null)
 
   useEffect(() => {
-    if (ready && (!activeWarehouseId || !active || active.entries.length === 0 || !active.submitted)) {
-      router.replace('/auditor')
+    if (ready && !activeWarehouseId) router.replace('/auditor')
+  }, [ready, activeWarehouseId, router])
+
+  useEffect(() => {
+    if (!activeWarehouseId) return
+    api
+      .consolidado(activeWarehouseId)
+      .then(setItems)
+      .catch((e: unknown) =>
+        setError(e instanceof Error ? e.message : 'No se pudo cargar el consolidado.'),
+      )
+  }, [activeWarehouseId])
+
+  const resumen = useMemo(
+    () =>
+      items
+        ? {
+            total: items.length,
+            auditables: items.filter((i) => i.clasificacion === 'auditable').length,
+            conciliados: items.filter((i) => i.clasificacion === 'conciliado').length,
+          }
+        : null,
+    [items],
+  )
+
+  const visibles = useMemo(() => {
+    if (!items) return []
+    const q = normalizeName(query)
+    const lista = q
+      ? items.filter((i) => normalizeName(`${i.nombre} ${i.codigo ?? ''}`).includes(q))
+      : items
+    // Primero lo que sigue sin resolver: es lo que impide cerrar con criterio.
+    return [...lista].sort(
+      (a, b) => Number(b.clasificacion === 'auditable') - Number(a.clasificacion === 'auditable'),
+    )
+  }, [items, query])
+
+  async function cerrar() {
+    if (!activeWarehouseId) return
+    setCerrando(true)
+    setError(null)
+    try {
+      setCerrado(await api.cerrarInventario(activeWarehouseId))
+      setConfirmando(false)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo cerrar el inventario.')
+    } finally {
+      setCerrando(false)
     }
-  }, [ready, activeWarehouseId, active, router])
-
-  if (!warehouse || rows.length === 0) return null
-
-  const approved = rows.filter((r) => r.status === 'aprobado').length
-  const corrected = rows.filter((r) => r.status === 'corregido').length
-  const pending = rows.filter((r) => r.status === 'pendiente').length
-  const totalDiff = rows.reduce((sum, r) => sum + Math.abs(r.difference), 0)
-
-  function handleExport() {
-    if (!warehouse) return
-    const csv = buildCsv(rows, warehouse)
-    const stamp = new Date().toISOString().slice(0, 10)
-    downloadCsv(`conteo-${warehouse.id}-${stamp}.csv`, csv)
-    setDownloaded(true)
   }
 
-  function handleReset() {
-    if (activeWarehouseId) clearWarehouse(activeWarehouseId)
-    router.push('/auditor')
-  }
+  if (!warehouse) return null
 
   return (
     <div className="min-h-dvh bg-background pb-40">
-      <TopBar subtitle={warehouse.name} roleTag="Auditor" />
+      <TopBar title={warehouse.name} subtitle="Consolidado y cierre" backHref="/auditor" roleTag="Auditor" />
 
       <main className="mx-auto max-w-md px-4">
-        <button
-          type="button"
-          onClick={() => router.push('/auditor')}
-          className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-muted-foreground hover:text-foreground"
-        >
-          <ChevronLeft className="h-4 w-4" />
-          Bodegas
-        </button>
-
-        <section className="mt-3 rounded-2xl border border-border bg-card p-5 shadow-sm">
-          <span
-            className={cn(
-              'grid h-12 w-12 place-items-center rounded-xl',
-              pending === 0 ? 'bg-success-soft' : 'bg-warning-soft',
-            )}
-          >
-            <Check className={cn('h-6 w-6', pending === 0 ? 'text-success' : 'text-warning-foreground')} />
-          </span>
-          <h1 className="mt-3 font-display text-xl font-extrabold text-foreground">
-            {pending === 0 ? 'Verificación completada' : 'Reporte en progreso'}
-          </h1>
-          <p className="mt-1 text-pretty text-sm text-muted-foreground">
-            {pending === 0
-              ? 'Todos los ítems fueron revisados. Exporta el reporte final en CSV para el sistema de inventario.'
-              : `Faltan ${pending} ítem${pending > 1 ? 's' : ''} por verificar. Puedes exportar un avance parcial.`}
+        {error && (
+          <p className="mt-4 flex items-start gap-1.5 rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            {error}
           </p>
+        )}
 
-          <div className="mt-4 grid grid-cols-3 gap-2 text-center">
-            <div className="rounded-xl bg-success-soft p-3">
-              <p className="font-display text-xl font-extrabold text-success">{approved}</p>
-              <p className="text-[11px] text-muted-foreground">Aprobados</p>
-            </div>
-            <div className="rounded-xl bg-primary-soft p-3">
-              <p className="font-display text-xl font-extrabold text-primary">{corrected}</p>
-              <p className="text-[11px] text-muted-foreground">Corregidos</p>
-            </div>
-            <div className="rounded-xl bg-muted p-3">
-              <p className="font-display text-xl font-extrabold text-foreground">{totalDiff}</p>
-              <p className="text-[11px] text-muted-foreground">Dif. total</p>
-            </div>
-          </div>
-        </section>
+        {cerrado && (
+          <section className="mt-4 rounded-2xl border-2 border-success/40 bg-success-soft/50 p-4">
+            <p className="flex items-center gap-1.5 font-display text-base font-extrabold text-success">
+              <CheckCircle2 className="h-5 w-5" />
+              Inventario cerrado
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {cerrado.articulosActualizados} artículos actualizados en el sistema central con tu aval.
+            </p>
+          </section>
+        )}
 
-        <h2 className="mb-2 mt-5 font-display text-sm font-bold uppercase tracking-wide text-muted-foreground">
-          Detalle del reporte
-        </h2>
-        <ol className="space-y-2">
-          {rows.map((r) => {
-            const changed = r.difference !== 0
-            return (
-              <li key={r.order} className="rounded-xl border border-border bg-card p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="truncate font-semibold text-foreground">
-                      <span className="mr-1 text-muted-foreground">{r.order}.</span>
-                      {r.name}
-                    </p>
+        {items === null && !error && (
+          <p className="mt-10 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Cargando el consolidado…
+          </p>
+        )}
+
+        {resumen && (
+          <>
+            <section className="mt-4 grid grid-cols-3 gap-2">
+              <Dato valor={resumen.total} rotulo="Artículos" />
+              <Dato valor={resumen.conciliados} rotulo="Conciliados" tono="success" />
+              <Dato valor={resumen.auditables} rotulo="Auditables" tono="warning" />
+            </section>
+
+            <div className="my-4">
+              <TextField
+                label="Buscar artículo"
+                placeholder="Nombre o código"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                icon={<Search className="h-4 w-4" />}
+                autoComplete="off"
+              />
+            </div>
+
+            <p className="mb-2 flex items-center gap-1.5 text-xs text-primary">
+              <Eye className="h-3.5 w-3.5" />
+              La cifra del sistema solo la ves tú.
+            </p>
+
+            <ul className="space-y-1.5">
+              {visibles.slice(0, 200).map((i) => (
+                <li
+                  key={`${i.codigo ?? ''}-${i.nombre}`}
+                  className={cn(
+                    'rounded-xl border-2 bg-card p-3',
+                    i.clasificacion === 'auditable' ? 'border-warning-border' : 'border-border',
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-semibold text-foreground">{i.nombre}</span>
+                      <span className="block text-xs text-muted-foreground">
+                        {i.codigo ? `${i.codigo} · ` : ''}
+                        {i.clasificacion === 'auditable'
+                          ? leerMotivo(i.motivo)
+                          : `${i.rondasAfirmando} ${i.rondasAfirmando === 1 ? 'ronda' : 'rondas'} de acuerdo`}
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-right">
+                      <span className="block font-display text-sm font-bold text-foreground">
+                        {i.valorFinal ?? '—'} <span className="text-[11px] font-normal text-muted-foreground">{i.unidad}</span>
+                      </span>
+                      <span className="block text-[11px] text-muted-foreground">
+                        sistema: {i.saldoSistema ?? '—'}
+                      </span>
+                    </span>
                   </div>
-                  <span
-                    className={cn(
-                      'shrink-0 rounded-full px-2 py-1 text-[11px] font-semibold',
-                      r.status === 'aprobado'
-                        ? 'bg-success-soft text-success'
-                        : r.status === 'corregido'
-                          ? 'bg-primary-soft text-primary'
-                          : 'bg-muted text-muted-foreground',
-                    )}
-                  >
-                    {r.status === 'aprobado' ? 'Aprobado' : r.status === 'corregido' ? 'Corregido' : 'Pendiente'}
-                  </span>
-                </div>
-                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                  <span className="text-muted-foreground">
-                    Afiliado:{' '}
-                    <strong className="text-foreground">
-                      {formatUnit(r.affiliateQty, r.affiliateUnit)}
-                    </strong>
-                  </span>
-                  {changed && (
-                    <span className="inline-flex items-center gap-1 text-primary">
-                      <ArrowLeftRight className="h-3 w-3" />
-                      Auditor: <strong>{formatUnit(r.auditorQty, r.auditorUnit)}</strong>
-                    </span>
+                  {i.codigoRazon && (
+                    <p className="mt-1.5 text-[11px] text-muted-foreground">Causa: {i.codigoRazon}</p>
                   )}
-                  {r.wasAnomaly && (
-                    <span className="inline-flex items-center gap-0.5 rounded bg-warning-soft px-1.5 py-0.5 text-warning-foreground">
-                      <AlertTriangle className="h-3 w-3" /> inusual
-                    </span>
-                  )}
-                  {r.wasDuplicate && (
-                    <span className="inline-flex items-center gap-0.5 rounded bg-warning-soft px-1.5 py-0.5 text-warning-foreground">
-                      <Copy className="h-3 w-3" /> repetido
-                    </span>
-                  )}
-                </div>
-                {r.note && (
-                  <p className="mt-2 border-t border-border pt-2 text-xs italic text-muted-foreground">
-                    {r.note}
-                  </p>
-                )}
-              </li>
-            )
-          })}
-        </ol>
+                </li>
+              ))}
+            </ul>
 
-        <div className="mt-5 flex items-center gap-2 rounded-xl border border-border bg-muted p-3 text-xs text-muted-foreground">
-          <FileSpreadsheet className="h-4 w-4 shrink-0" />
-          <span>
-            El archivo CSV usa punto y coma (;) como separador y codificación UTF-8, compatible con
-            Excel en español.
-          </span>
-        </div>
+            {visibles.length > 200 && (
+              <p className="mt-3 text-center text-xs text-muted-foreground">
+                Se muestran 200 de {visibles.length}. Descarga la exportación para verlos todos.
+              </p>
+            )}
+          </>
+        )}
       </main>
 
-      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-card/95 backdrop-blur">
-        <div className="mx-auto flex max-w-md flex-col gap-2 px-4 py-3">
-          <Button size="block" variant={downloaded ? 'success' : 'primary'} onClick={handleExport}>
-            {downloaded ? (
-              <>
-                <Check className="h-[18px] w-[18px]" />
-                Descargado — exportar de nuevo
-              </>
-            ) : (
-              <>
-                <ArrowDownToLine className="h-[18px] w-[18px]" />
-                Exportar reporte CSV
-              </>
+      {items && !cerrado && activeWarehouseId && (
+        <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-card/95 backdrop-blur">
+          <div className="mx-auto max-w-md space-y-2 px-4 py-3">
+            {/* La descarga es un enlace y no un `fetch`: el archivo lo pide el
+                navegador con la misma cookie, y así funciona el "Guardar como"
+                del sistema en vez de un blob en memoria. */}
+            <a
+              href={api.urlExportacion(activeWarehouseId, 'csv')}
+              className="flex h-12 w-full items-center justify-center gap-2 rounded-xl border-2 border-input bg-card font-display text-sm font-bold text-foreground"
+            >
+              <ArrowDownToLine className="h-[18px] w-[18px]" />
+              Descargar consolidado (CSV)
+            </a>
+
+            {resumen && resumen.auditables > 0 && (
+              <p className="text-center text-xs text-warning-foreground">
+                Quedan {resumen.auditables} artículos auditables sin resolver.
+              </p>
             )}
-          </Button>
-          {downloaded && (
-            <Button size="block" variant="ghost" onClick={handleReset}>
-              <RotateCcw className="h-[18px] w-[18px]" />
-              Cerrar y archivar esta bodega
+
+            <Button size="block" onClick={() => setConfirmando(true)} disabled={cerrando}>
+              <Lock className="h-[18px] w-[18px]" />
+              Cerrar inventario
             </Button>
-          )}
+          </div>
         </div>
-      </div>
+      )}
+
+      {confirmando && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
+          <div role="alertdialog" aria-modal="true" className="w-full max-w-sm rounded-2xl border border-border bg-card p-5 shadow-xl">
+            <p className="flex items-start gap-2 font-display text-base font-bold text-foreground">
+              <Lock className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+              Esto mueve el saldo del sistema central
+            </p>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Hasta ahora ningún conteo ha tocado los saldos: el sistema solo ha acumulado lo que
+              cada persona afirmó. Al cerrar, tu consolidado pasa a ser el saldo oficial de{' '}
+              <strong>{warehouse.name}</strong>. No se deshace.
+            </p>
+            {resumen && resumen.auditables > 0 && (
+              <p className="mt-2 rounded-lg bg-warning/10 p-2 text-sm text-warning-foreground">
+                {resumen.auditables} artículos siguen sin resolver y entrarán como están.
+              </p>
+            )}
+            <div className="mt-4 flex flex-col gap-2">
+              <Button size="block" loading={cerrando} onClick={() => void cerrar()}>
+                {cerrando ? 'Cerrando…' : 'Sí, cerrar el inventario'}
+              </Button>
+              <button
+                type="button"
+                onClick={() => setConfirmando(false)}
+                className="h-12 rounded-xl border-2 border-input bg-card font-display text-sm font-bold text-foreground"
+              >
+                Volver
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Dato({ valor, rotulo, tono }: { valor: number; rotulo: string; tono?: 'success' | 'warning' }) {
+  return (
+    <div
+      className={cn(
+        'rounded-xl border border-border bg-card p-3 text-center',
+        tono === 'success' && 'bg-success-soft/40',
+        tono === 'warning' && valor > 0 && 'bg-warning-soft/50',
+      )}
+    >
+      <p
+        className={cn(
+          'font-display text-2xl font-extrabold leading-none text-foreground',
+          tono === 'success' && 'text-success',
+          tono === 'warning' && valor > 0 && 'text-warning-foreground',
+        )}
+      >
+        {valor.toLocaleString('es-CO')}
+      </p>
+      <p className="mt-1 text-[11px] uppercase tracking-wide text-muted-foreground">{rotulo}</p>
     </div>
   )
 }
