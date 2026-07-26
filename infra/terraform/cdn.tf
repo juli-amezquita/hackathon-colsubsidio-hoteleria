@@ -79,23 +79,29 @@ resource "aws_cloudfront_distribution" "api" {
     compress = true
   }
 
-  # La sesión de voz. CloudFront reenvía WebSockets, pero solo si el
-  # comportamiento no cachea y deja pasar todas las cabeceras — `Upgrade` y
-  # `Connection` incluidas, que es lo que hace la política "todo menos Host".
-  ordered_cache_behavior {
-    path_pattern           = "/voz/sesion"
-    target_origin_id       = "instancia"
-    viewer_protocol_policy = "redirect-to-https"
+  # Los WebSocket: la sesión de voz y la presencia en vivo.
+  #
+  # CloudFront los reenvía, pero solo si el comportamiento no cachea y deja
+  # pasar todas las cabeceras —`Upgrade` y `Connection` incluidas, que es lo que
+  # hace la política "todo menos Host"—. Y sobre todo si NO comprime: el
+  # comportamiento por defecto sí lo hace, y con eso el `upgrade` devuelve 500
+  # antes de llegar a nginx. Se comprobó desplegando sin este bloque.
+  dynamic "ordered_cache_behavior" {
+    for_each = ["/voz/sesion", "/presencia"]
 
-    allowed_methods = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
-    cached_methods  = ["GET", "HEAD"]
+    content {
+      path_pattern           = ordered_cache_behavior.value
+      target_origin_id       = "instancia"
+      viewer_protocol_policy = "redirect-to-https"
 
-    cache_policy_id          = data.aws_cloudfront_cache_policy.sin_cache.id
-    origin_request_policy_id = data.aws_cloudfront_origin_request_policy.todo_menos_host.id
+      allowed_methods = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
+      cached_methods  = ["GET", "HEAD"]
 
-    # Sin compresión: comprimir un flujo de audio binario cuadro a cuadro solo
-    # añade latencia a algo que ya viene comprimido por el códec.
-    compress = false
+      cache_policy_id          = data.aws_cloudfront_cache_policy.sin_cache.id
+      origin_request_policy_id = data.aws_cloudfront_origin_request_policy.todo_menos_host.id
+
+      compress = false
+    }
   }
 
   # Lo único que se cachea: los estáticos de Next, que llevan hash en el nombre
