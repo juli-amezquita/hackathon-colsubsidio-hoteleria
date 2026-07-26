@@ -61,8 +61,24 @@ export class PresenciaGateway implements OnApplicationShutdown {
       });
     });
 
-    // Un solo suscriptor de Redis para todo el proceso, no uno por cliente.
-    this.desuscribir = this.presencia.alCambiar(() => void this.difundir());
+    // La suscripción a Redis va AL FINAL y protegida.
+    //
+    // Estaba antes, y si fallaba —Redis aún levantando, TLS, lo que sea— la
+    // excepción salía de `montar()` DESPUÉS de crear el WebSocketServer pero
+    // ANTES de registrar el `upgrade`. El resultado en producción era
+    // desconcertante: la aplicación arrancaba bien, `/voz/sesion` respondía 401
+    // como debe, y `/presencia` devolvía 500 porque Fastify lo atendía como una
+    // petición HTTP normal — nadie había reclamado el upgrade.
+    //
+    // Sin avisos en vivo la vista sigue sirviendo: cada cliente recibe su
+    // estado al conectarse y al entrar o salir de una bodega. Lo que se pierde
+    // es ver llegar a un compañero sin tocar nada, y eso no justifica quedarse
+    // sin la ruta entera.
+    try {
+      this.desuscribir = this.presencia.alCambiar(() => void this.difundir());
+    } catch {
+      this.desuscribir = null;
+    }
   }
 
   private async atender(ws: WebSocket, usuarioId: string): Promise<void> {
