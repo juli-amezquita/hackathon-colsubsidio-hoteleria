@@ -10,6 +10,7 @@ import { SesionService } from '../../modules/identidad/sesion.service';
 import { ResolucionService } from '../../modules/catalogo/resolucion.service';
 import { avanzar, type Fase, type ItemEnCurso } from './dialogo';
 import { SesionDeVoz } from './sesion-voz';
+import { cookieDeSesion } from '../../platform/seguridad/cookie-ws';
 
 /**
  * El puente entre el operario y el sistema. `wss://…/voz/sesion?ronda=<id>`
@@ -260,15 +261,4 @@ export class PuenteDeVoz implements OnApplicationShutdown {
 
 function enviar(ws: WebSocket, mensaje: Record<string, unknown>): void {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(mensaje));
-}
-
-/** La cookie de sesión, sacada a mano del encabezado: aquí no hay Fastify. */
-function cookieDeSesion(encabezado: string | undefined, nombre: string): string | undefined {
-  if (!encabezado) return undefined;
-  for (const trozo of encabezado.split(';')) {
-    const i = trozo.indexOf('=');
-    if (i === -1) continue;
-    if (trozo.slice(0, i).trim() === nombre) return decodeURIComponent(trozo.slice(i + 1).trim());
-  }
-  return undefined;
 }

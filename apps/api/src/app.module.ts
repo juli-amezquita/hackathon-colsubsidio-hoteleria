@@ -10,6 +10,7 @@ import { ConsolidacionModule } from './modules/consolidacion/consolidacion.modul
 import { IdentidadModule } from './modules/identidad/identidad.module';
 import { IntegracionModule } from './modules/integracion/integracion.module';
 import { SaludModule } from './platform/salud/salud.module';
+import { PresenciaModule } from './modules/presencia/presencia.module';
 import { ProveedoresModule } from './proveedores/proveedores.module';
 
 /**
@@ -20,6 +21,7 @@ import { ProveedoresModule } from './proveedores/proveedores.module';
 @Module({
   imports: [
     SaludModule,
+    PresenciaModule,
     ProveedoresModule,
     IdentidadModule,
     CatalogoModule,

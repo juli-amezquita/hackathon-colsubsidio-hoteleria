@@ -19,6 +19,7 @@ const RUTAS_API = [
   'voz',
   'salud',
   'tiempo',
+  'presencia',
 ]
 
 const API = process.env.API_INTERNA ?? 'http://127.0.0.1:3000'

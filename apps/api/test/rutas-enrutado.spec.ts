@@ -56,10 +56,17 @@ function prefijosDeControladores(): Set<string> {
   return prefijos;
 }
 
-/** Los prefijos del `location ~ ^/(…)` que manda a la API. */
+/**
+ * Los prefijos del `location` marcado `# rutas-api`.
+ *
+ * El marcador existe porque hay más de un `location` con alternativas: el de
+ * los WebSocket usa la misma forma. Buscar "el primero que coincida" funcionaba
+ * hasta que apareció el segundo, y entonces esta prueba habría empezado a
+ * validar el bloque equivocado sin dejar de pasar.
+ */
 function prefijosDeNginx(): Set<string> {
   const conf = readFileSync(NGINX, 'utf8');
-  const bloque = /location\s+~\s+\^\/\(([^)]*)\)/.exec(conf)?.[1] ?? '';
+  const bloque = /location\s+~\s+\^\/\(([^)]*)\)[^\n]*# rutas-api/.exec(conf)?.[1] ?? '';
   return new Set(bloque.split('|').filter(Boolean));
 }
 
@@ -69,6 +76,15 @@ function prefijosDeNext(): Set<string> {
   const bloque = /RUTAS_API\s*=\s*\[([^\]]*)\]/.exec(conf)?.[1] ?? '';
   return new Set([...bloque.matchAll(/'([^']+)'/g)].map((m) => m[1]!));
 }
+
+/**
+ * Rutas que existen sin `@Controller` porque son WebSocket puros.
+ *
+ * No las sirve Nest por HTTP, así que no aparecen como controlador, pero el
+ * enrutador tiene que conocerlas igual: sin ellas, `/presencia` acabaría en las
+ * pantallas y devolvería HTML a quien pide un `upgrade`.
+ */
+const SOLO_WEBSOCKET = new Set(['presencia']);
 
 const CONSUMIDORES = [
   ['nginx (infra/nginx.conf)', prefijosDeNginx],
@@ -90,7 +106,9 @@ describe('las rutas de la API están declaradas en todos los enrutadores', () =>
     // Una ruta de más no rompe nada hoy, pero enmascara la eliminación de un
     // controlador y hace que la lista deje de ser legible como inventario.
     const controladores = prefijosDeControladores();
-    const sobrantes = [...leer()].filter((p) => !controladores.has(p)).sort();
+    const sobrantes = [...leer()]
+      .filter((p) => !controladores.has(p) && !SOLO_WEBSOCKET.has(p))
+      .sort();
 
     expect(sobrantes, `Rutas declaradas que ya ningún controlador sirve: ${sobrantes.join(', ')}`).toEqual(
       [],

@@ -170,10 +170,32 @@ describe('F-10/F-11/F-12 · outbox y despacho', () => {
     const d = new DespachadorOutbox(sql, [inestable], 20, 50, (e) => fallos.push(e));
 
     d.iniciar();
-    // Se espera a que haya fallado y reintentado. Con 20 ms de intervalo, 400 ms
-    // dan margen de sobra sin volver la prueba lenta.
-    await new Promise((r) => setTimeout(r, 400));
+    // Se espera a que OCURRA, no un tiempo fijo.
+    //
+    // La versión anterior dormía 400 ms y daba por hecho que con 20 ms de
+    // intervalo daba de sobra. Casi siempre sí; una de cada varias corridas, no
+    // — y una prueba que falla a veces por el reloj de la máquina enseña al
+    // equipo a reintentar el CI en vez de leerlo.
+    const limite = Date.now() + 5000;
+    while (intentos < 2 && Date.now() < limite) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
     d.detener();
+
+    // Al detener, una pasada puede quedar a medias: el guarda `corriendo` hace
+    // que una llamada inmediata devuelva 0 sin hacer nada. Se insiste hasta que
+    // el evento quede despachado o se agote el plazo.
+    const finalizado = async (): Promise<boolean> => {
+      const [f] = await sql<{ n: number }[]>`
+        SELECT count(*)::int n FROM outbox
+        WHERE despachado_en IS NULL AND payload->>'bodegaId' = ${bodegaId}`;
+      return (f?.n ?? 1) === 0;
+    };
+    const hasta = Date.now() + 5000;
+    while (!(await finalizado()) && Date.now() < hasta) {
+      await d.pasada().catch(() => undefined);
+      await new Promise((r) => setTimeout(r, 20));
+    }
 
     // Falló, se reportó —no se lo tragó en silencio— y volvió a intentarlo.
     expect(fallos.length).toBeGreaterThanOrEqual(1);
