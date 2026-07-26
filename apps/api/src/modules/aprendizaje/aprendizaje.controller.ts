@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Inject, Param, Post, Query, Req } from '@nestjs/common';
+import {
+  BadRequestException, Body, Controller, Get, Inject, Param, Post, Query, Req } from '@nestjs/common';
 import { AliasAprobadoSchema, DecisionPropuestaSchema } from '@cci/contracts';
 
 import { Roles } from '../../platform/autorizacion/decoradores';
@@ -14,6 +15,8 @@ import { CriticoService } from './critico.service';
  * auditores, y leer las métricas de calidad de la propia captura mientras se
  * cuenta no ayuda a contar. Es un instrumento de quien opera el sistema.
  */
+const ESTADOS = ['propuesta', 'aprobada', 'rechazada', 'aplicada'];
+
 @Controller('aprendizaje')
 export class AprendizajeController {
   constructor(
@@ -48,6 +51,14 @@ export class AprendizajeController {
   @Get('propuestas')
   @Roles('auditor', 'administrador')
   async propuestas(@Query('estado') estado?: string) {
+    // El valor entra crudo a un `::estado_propuesta`. Cualquier cosa que no sea
+    // uno de los cuatro estados produce 22P02 y un 500 con traza de Postgres.
+    if (estado && !ESTADOS.includes(estado)) {
+      throw new BadRequestException({
+        codigo: 'ESTADO_INVALIDO',
+        mensaje: `Estado no reconocido. Use uno de: ${ESTADOS.join(', ')}.`,
+      });
+    }
     return { items: await this.aprendizaje.listarPropuestas(estado) };
   }
 

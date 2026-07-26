@@ -57,7 +57,7 @@ export class IdentidadController {
   }
 
   @Get()
-  @Roles('operador', 'auditor', 'administrador')
+  @Roles('operador', 'auditor', 'administrador', 'supervisor')
   async actual(@Req() req: PeticionAutenticada): Promise<Sesion> {
     const usuario = await this.identidad.buscarPorId(req.usuario!.usuarioId);
     if (!usuario) throw new UnauthorizedException({ codigo: 'NO_AUTENTICADO', mensaje: 'Sesión inválida.' });
@@ -71,7 +71,7 @@ export class IdentidadController {
   }
 
   @Post('cierre')
-  @Roles('operador', 'auditor', 'administrador')
+  @Roles('operador', 'auditor', 'administrador', 'supervisor')
   @HttpCode(204)
   cerrar(@Res({ passthrough: true }) res: FastifyReply): void {
     void res.clearCookie(this.sesiones.nombreCookie, this.sesiones.opcionesCookie());

@@ -11,6 +11,9 @@ import {
   type Ronda,
 } from '@cci/contracts';
 
+import { z } from 'zod';
+
+import { ZodPipe } from '../../platform/validacion/zod.pipe';
 import { Roles } from '../../platform/autorizacion/decoradores';
 import type { PeticionAutenticada } from '../../platform/autorizacion/sesion.guard';
 import { PROVEEDOR_CATALOGO, type ProveedorDeCatalogo } from '../../platform/dominio/catalogo';
@@ -25,6 +28,18 @@ import { RondaService } from './ronda.service';
  * convención: los tipos que devuelve no tienen dónde ponerlo, y la prueba E2
  * recorre todas las respuestas para comprobarlo.
  */
+/**
+ * Abrir una ronda es la primera frontera de entrada del sistema. No vivía en
+ * `@cci/contracts` porque nadie la validaba; queda aquí junto a su única ruta
+ * hasta que el paquete de contratos la absorba.
+ */
+const AperturaRondaSchema = z.object({
+  bodegaId: z.string().uuid(),
+  // El reloj del dispositivo, para medir su desfase (D-16). Opcional: sin él
+  // el desfase es 0, que es exactamente lo que significa no saberlo.
+  epochCliente: z.number().int().finite().optional(),
+});
+
 @Controller('rondas')
 export class CapturaController {
   constructor(
@@ -35,7 +50,11 @@ export class CapturaController {
   @Post()
   @Roles('operador')
   abrir(
-    @Body() datos: { bodegaId: string; epochCliente?: number },
+    // Era la ÚNICA ruta con cuerpo sin validar de toda la API (Principio VI).
+    // Un `{}` dejaba `bodegaId` en `undefined`, postgres.js lanzaba
+    // UNDEFINED_VALUE y el operario recibía un 500 al abrir su ronda — el
+    // primer paso de todo el flujo.
+    @Body(new ZodPipe(AperturaRondaSchema)) datos: { bodegaId: string; epochCliente?: number },
     @Req() req: PeticionAutenticada,
   ): Promise<Ronda> {
     return this.rondas.abrir(datos.bodegaId, req.usuario!.usuarioId, datos.epochCliente);
