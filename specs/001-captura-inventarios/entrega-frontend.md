@@ -8,6 +8,41 @@ Este documento es lo otro: **cuatro comportamientos que no se ven en el contrato
 
 **API:** `https://d1jhay4xdswind.cloudfront.net`
 
+## ⚠️ Dónde se publica el PWA — esto no es negociable
+
+**Tu build se sube al mismo origen que la API**, a un bucket S3 que ya está
+creado y conectado a CloudFront:
+
+```
+aws s3 sync ./dist s3://cci-mvp-pwa-83e731b4 --delete
+```
+
+No es una preferencia de despliegue. La cookie de sesión es `SameSite=Strict`:
+un navegador **no la envía** a peticiones hacia otro sitio, así que un frontend
+en Vercel, Amplify u otro dominio recibiría **401 en todo**, incluso con CORS
+abierto. Las alternativas serían bajar la cookie a `SameSite=None` con token
+CSRF, o abrir CORS con credenciales — las dos cambian una propiedad de
+seguridad para resolver un problema de despliegue.
+
+Con el mismo origen: la cookie viaja sola, CORS no interviene y el Service
+Worker tiene su contexto seguro sin comprar dominio. Verificado.
+
+**Cómo está repartido:**
+
+| Ruta | Va a |
+|---|---|
+| `/sesion`, `/rondas`, `/bodegas`, `/auditoria`, `/integracion`, `/aprendizaje`, `/consulta`, `/administracion`, `/voz`, `/salud`, `/tiempo` | la API |
+| todo lo demás | tu PWA |
+
+Las rutas de cliente funcionan: `/ronda/abc` devuelve tu `index.html` con 200,
+así que recargar en cualquier pantalla no rompe.
+
+**En local** seguí usando `http://localhost:5173` contra la API de CloudFront —
+ahí sí necesitás `credentials: 'include'` y CORS, que está configurado. Pero
+recordá que la cookie `Strict` no viajará: para desarrollo, un proxy en tu
+Vite (`server.proxy`) hacia CloudFront es lo que hace que se comporte igual que
+en producción.
+
 ---
 
 ## F-18 · Durabilidad antes que red

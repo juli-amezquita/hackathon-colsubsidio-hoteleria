@@ -36,6 +36,21 @@ resource "aws_ssm_parameter" "session_secret" {
   value = random_password.sesion.result
 }
 
+# El origen permitido para CORS.
+#
+# Con el PWA servido desde la misma distribución, el navegador ni siquiera
+# consulta CORS: es una petición del mismo origen. Se configura de todas formas
+# porque el default es `localhost:5173` —el de desarrollo del frontend— y dejar
+# eso en producción sería una autorización para un origen que no debería estar
+# ahí, aunque hoy nadie la use.
+resource "aws_ssm_parameter" "cors_origin" {
+  count = var.habilitar_escalado ? 0 : 1
+
+  name  = "${local.prefijo_ssm}/API_CORS_ORIGIN"
+  type  = "String"
+  value = "https://${aws_cloudfront_distribution.api[0].domain_name}"
+}
+
 resource "aws_ssm_parameter" "bucket_evidencia" {
   name  = "${local.prefijo_ssm}/BUCKET_EVIDENCIA"
   type  = "String"
