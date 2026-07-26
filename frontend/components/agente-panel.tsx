@@ -30,6 +30,7 @@ const ROTULO: Record<Estado, string> = {
   conectando: 'Conectando…',
   escuchando: 'Te escucho',
   hablando: 'Hablando…',
+  silenciado: 'Micrófono en silencio',
   error: 'Error',
 }
 
@@ -114,7 +115,8 @@ export function AgentePanel({
     agenteRef.current = null
   }
 
-  const activo = estado === 'escuchando' || estado === 'hablando'
+  const activo = estado === 'escuchando' || estado === 'hablando' || estado === 'silenciado'
+  const mudo = estado === 'silenciado'
 
   return (
     <section className="rounded-2xl border border-border bg-card p-5 shadow-sm">
@@ -124,6 +126,8 @@ export function AgentePanel({
             <Volume2 className="h-4 w-4 animate-pulse text-primary" />
           ) : estado === 'conectando' ? (
             <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          ) : mudo ? (
+            <MicOff className="h-4 w-4 text-warning-foreground" />
           ) : activo ? (
             <Mic className="h-4 w-4 text-primary" />
           ) : (
@@ -131,7 +135,7 @@ export function AgentePanel({
           )}
           {ROTULO[estado]}
         </p>
-        {activo && (
+        {activo && !mudo && (
           <span className="flex items-center gap-1" aria-hidden="true">
             {[0, 1, 2].map((i) => (
               <span
@@ -176,22 +180,46 @@ export function AgentePanel({
         </p>
       )}
 
-      <button
-        type="button"
-        onClick={activo ? apagar : () => void encender()}
-        disabled={estado === 'conectando'}
-        className={cn(
-          'mt-4 grid h-16 w-full place-items-center rounded-xl font-display text-base font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60',
-          activo
-            ? 'bg-destructive text-white'
-            : 'bg-primary text-primary-foreground hover:bg-[#00568f]',
+      <div className="mt-4 flex gap-2">
+        {/* Silenciar NO cierra la sesión: lo que se corta es el envío del
+            micrófono. Cerrarla obligaría a pedir permiso otra vez en algunos
+            navegadores y a rehacer la conexión con el proveedor. */}
+        {activo && (
+          <button
+            type="button"
+            onClick={() => agenteRef.current?.silenciar(!mudo)}
+            aria-pressed={mudo}
+            className={cn(
+              'grid h-16 w-20 shrink-0 place-items-center rounded-xl border-2 font-display text-xs font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+              mudo
+                ? 'border-warning-border bg-warning/20 text-warning-foreground'
+                : 'border-input bg-card text-foreground hover:bg-muted',
+            )}
+          >
+            <span className="flex flex-col items-center gap-1">
+              {mudo ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+              {mudo ? 'Reanudar' : 'Silenciar'}
+            </span>
+          </button>
         )}
-      >
-        <span className="flex items-center gap-2">
-          {activo ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
-          {activo ? 'Terminar' : 'Empezar a contar'}
-        </span>
-      </button>
+
+        <button
+          type="button"
+          onClick={activo ? apagar : () => void encender()}
+          disabled={estado === 'conectando'}
+          className={cn(
+            'grid h-16 flex-1 place-items-center rounded-xl font-display text-base font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60',
+            activo
+              ? 'bg-destructive text-white'
+              : 'bg-primary text-primary-foreground hover:bg-[#00568f]',
+          )}
+        >
+          <span className="flex items-center gap-2">
+            {activo ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+            {activo ? 'Terminar' : 'Empezar a contar'}
+          </span>
+        </button>
+      </div>
 
       {/* Escribir recorre el MISMO diálogo, respuesta hablada incluida
           (FR-1.6). No es un modo aparte: es el mismo agente por otro canal. */}

@@ -221,6 +221,40 @@ export function CountProvider({ children }: { children: ReactNode }) {
     }
   }, [state, ready])
 
+  /**
+   * Recupera el catálogo de la ronda abierta al volver a entrar.
+   *
+   * `catalogo` vive en memoria de React y `activeWarehouseId` en localStorage,
+   * así que sobreviven cosas distintas a una recarga: al volver, la ronda sigue
+   * abierta y el catálogo está vacío. Y sin catálogo NADA funciona —
+   * `resolver()` no encuentra ningún artículo, así que el formulario manual no
+   * registra, y `confirmarPorVoz` descarta en silencio lo que el operario
+   * acababa de confirmar hablando.
+   *
+   * Era un fallo invisible: la pantalla se veía normal, los botones respondían,
+   * y no pasaba nada. Recargar la página es lo primero que hace cualquiera
+   * cuando algo va raro, y hasta ahora era justo lo que lo rompía.
+   */
+  useEffect(() => {
+    if (!ready || catalogo.length > 0) return
+    const id = state.activeWarehouseId
+    const ronda = id ? state.warehouses[id]?.rondaId : null
+    if (!ronda) return
+
+    let vigente = true
+    api
+      .catalogo(ronda)
+      .then((items) => {
+        if (vigente) setCatalogo(items)
+      })
+      .catch(() => {
+        if (vigente) setError('No se pudo cargar el catálogo de la bodega. Vuelve a entrar.')
+      })
+    return () => {
+      vigente = false
+    }
+  }, [ready, catalogo.length, state.activeWarehouseId, state.warehouses])
+
   // ── La cola ──────────────────────────────────────────────────────────────
 
   const marcar = useCallback(

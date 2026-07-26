@@ -30,10 +30,28 @@ import { clasificar, type AfirmacionDeRonda, type Consolidado } from './clasific
 @Injectable()
 export class ConsolidacionService implements Consumidor, ProveedorDeEstado {
   readonly nombre = 'consolidacion';
-  readonly interesadoEn: readonly TipoEvento[] = ['RondaCerrada'];
+  readonly interesadoEn: readonly TipoEvento[] = ['RondaCerrada', 'ProductoFantasmaRegistrado'];
 
   async manejar(trx: postgres.TransactionSql, evento: Evento): Promise<void> {
     const { bodegaId } = evento.payload as { bodegaId: string };
+
+    // Un hallazgo NO espera al cierre de la ronda.
+    //
+    // Antes solo se escalaba al reproyectar, y reproyectar solo ocurre cuando
+    // una ronda cierra. El efecto en campo era este: el operario reportaba un
+    // producto que no está en el catálogo, el sistema lo guardaba, respondía
+    // 201 con su identificador… y al Auditor no le llegaba nada. En una ronda
+    // que dura días, o en una que no puede cerrarse por una alerta pendiente,
+    // el hallazgo se quedaba invisible indefinidamente.
+    //
+    // Y no hay motivo para esperar: un fantasma no tiene saldo esperado contra
+    // el que compararse ni aritmética entre rondas que resolver. Consolidarlo
+    // es escalarlo, y escalarlo se puede hacer ya.
+    if (evento.tipo === 'ProductoFantasmaRegistrado') {
+      await this.escalarFantasmas(trx, bodegaId);
+      return;
+    }
+
     await this.reproyectar(trx, bodegaId);
   }
 
@@ -127,9 +145,13 @@ export class ConsolidacionService implements Consumidor, ProveedorDeEstado {
       INSERT INTO discrepancia (id, bodega_id, fantasma_id, motivo)
       SELECT gen_random_uuid(), ${bodegaId}, pf.id, 'producto_fantasma'
       FROM producto_fantasma pf
-      JOIN ronda_cierre rc ON rc.ronda_id = pf.ronda_id
       WHERE pf.bodega_id = ${bodegaId}
       ON CONFLICT (fantasma_id) WHERE fantasma_id IS NOT NULL DO NOTHING`;
+
+    // Se quitó el `JOIN ronda_cierre`: exigía que la ronda estuviera cerrada
+    // para que el hallazgo existiera a ojos del Auditor. Eso no protegía nada
+    // —el hallazgo ya está escrito y es inmutable— y retrasaba lo único que el
+    // Auditor puede hacer con él: mirarlo.
   }
 
   private async guardar(

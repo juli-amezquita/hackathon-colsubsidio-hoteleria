@@ -1,6 +1,6 @@
 'use client'
 
-import { AlertTriangle, CheckCircle2, Copy, HelpCircle, Send } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Clock, Copy, HelpCircle, Send } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { RequireRole } from '@/components/require-role'
@@ -108,7 +108,18 @@ function Resumen() {
 
         <ol className="space-y-2">
           {entries.map((entry, i) => {
-            const isFlagged = entry.isAnomaly || entry.isDuplicate || entry.needsReview
+            // El veredicto del SERVIDOR manda sobre las banderas locales.
+            //
+            // Antes el visto verde salía solo de `isAnomaly || isDuplicate ||
+            // needsReview`, que son sospechas del dispositivo. El servidor, que
+            // es el único que ve el saldo esperado, podía haber marcado
+            // discrepancia y la pantalla seguía pintando "sin alertas". Se
+            // probó en producción: 10 kg de arroz y 0 kg de arroz, los dos con
+            // `alerta_discrepancia`, los dos en verde.
+            const alertaDelServidor = entry.validacion?.startsWith('alerta') === true
+            const sinAcuse = entry.estadoEnvio !== 'enviado'
+            const isFlagged =
+              alertaDelServidor || sinAcuse || entry.isAnomaly || entry.isDuplicate || entry.needsReview
             return (
               <li
                 key={entry.id}
@@ -130,6 +141,15 @@ function Resumen() {
                   {entry.needsReview && <HelpCircle className="h-4 w-4 text-warning-foreground" aria-label="Revisar" />}
                   {entry.isAnomaly && <AlertTriangle className="h-4 w-4 text-warning-foreground" aria-label="Cantidad inusual" />}
                   {entry.isDuplicate && <Copy className="h-4 w-4 text-warning-foreground" aria-label="Repetido" />}
+                  {alertaDelServidor && !entry.alertaRespondida && (
+                    <AlertTriangle
+                      className="h-4 w-4 text-warning-foreground"
+                      aria-label="No cuadra con el sistema"
+                    />
+                  )}
+                  {sinAcuse && (
+                    <Clock className="h-4 w-4 text-muted-foreground" aria-label="Sin confirmar todavía" />
+                  )}
                   {!isFlagged && <CheckCircle2 className="h-4 w-4 text-success" aria-label="Sin alertas" />}
                 </div>
               </li>

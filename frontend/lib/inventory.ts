@@ -33,11 +33,28 @@ export function orderedEntries(entries: CountEntry[]) {
   return [...entries].sort((a, b) => a.order - b.order)
 }
 
+/**
+ * Qué necesita atención de lo capturado.
+ *
+ * `flagged` cuenta el veredicto del SERVIDOR además de las sospechas locales, y
+ * ese orden importa: el dispositivo puede sospechar por una cantidad grande o
+ * un nombre repetido, pero el único que ve el saldo esperado es el servidor.
+ * Contar solo las banderas locales hacía que la pantalla dijera "sin alertas"
+ * sobre conteos que el servidor había marcado — y que luego bloqueaban el
+ * cierre sin que nadie supiera por qué.
+ */
 export function progress(entries: CountEntry[]) {
   const total = entries.length
   const anomalies = entries.filter((e) => e.isAnomaly).length
   const duplicates = entries.filter((e) => e.isDuplicate).length
-  const flagged = entries.filter((e) => e.isAnomaly || e.isDuplicate || e.needsReview).length
+  const flagged = entries.filter(
+    (e) =>
+      (e.validacion?.startsWith('alerta') === true && !e.alertaRespondida) ||
+      e.estadoEnvio !== 'enviado' ||
+      e.isAnomaly ||
+      e.isDuplicate ||
+      e.needsReview,
+  ).length
   return { total, anomalies, duplicates, flagged }
 }
 

@@ -153,7 +153,12 @@ function Conteo() {
    */
   function confirmarPorVoz(item: ItemConfirmado) {
     const articulo = catalogo.find((a) => a.articuloId === item.articuloId)
-    if (!articulo) return
+    if (!articulo) {
+      // Nunca en silencio. El operario acaba de confirmar hablando; si esto se
+      // descarta sin decir nada, él sigue contando creyendo que quedó.
+      setUnitError('No se pudo registrar: el catálogo no está cargado. Vuelve a entrar a la bodega.')
+      return
+    }
 
     // La unidad del artículo cuando el operario no dijo ninguna. Es la que el
     // catálogo declara, no una suposición nuestra.
@@ -277,6 +282,61 @@ function Conteo() {
             </p>
           </div>
         </section>
+
+        {/* Lo que el SERVIDOR marcó, para los dos modos de captura.
+            Es una alerta diferida: el conteo se envía, se confirma, y el
+            veredicto vuelve cuando el operario ya va en otro artículo. Por voz
+            además se canta; escribiendo no había forma de enterarse, y luego
+            bloqueaba el cierre sin explicación (FR-2.4). */}
+        {alertasSinResponder.length > 0 && (
+          <section className="mt-4 rounded-2xl border-2 border-warning-border bg-warning/10 p-4">
+            <p className="flex items-start gap-1.5 font-display text-sm font-bold text-warning-foreground">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              {alertasSinResponder.length === 1
+                ? 'Un conteo no cuadra con lo que el sistema tiene.'
+                : `${alertasSinResponder.length} conteos no cuadran con lo que el sistema tiene.`}
+            </p>
+            {/* No se dice si sobra o falta, ni cuánto: eso convertiría el
+                conteo ciego en un conteo guiado (FR-2.2). */}
+            <p className="mt-1 text-xs text-muted-foreground">
+              Verifica en el estante. Si tu conteo está bien, sostenlo.
+            </p>
+            <ul className="mt-3 space-y-2">
+              {alertasSinResponder.map((e) => (
+                <li key={e.id} className="flex items-center justify-between gap-2">
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-semibold text-foreground">{e.name}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {formatUnit(e.quantity, e.unit)}
+                    </span>
+                  </span>
+                  <span className="flex shrink-0 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingId(e.id)
+                        setName(e.name)
+                        setQuantity(e.quantity)
+                        setUnit(e.unit)
+                        setPhase('confirm')
+                      }}
+                      className="rounded-lg border-2 border-input bg-card px-2.5 py-1.5 text-xs font-bold text-foreground"
+                    >
+                      Recontar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => sostenerConteo(e.id)}
+                      className="rounded-lg bg-warning-foreground px-2.5 py-1.5 text-xs font-bold text-white"
+                    >
+                      Sostengo
+                    </button>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
 
         {/* Zona de captura */}
         {phase === 'idle' ? (
