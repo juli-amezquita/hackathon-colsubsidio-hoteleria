@@ -79,6 +79,25 @@ resource "aws_cloudfront_distribution" "api" {
     compress = true
   }
 
+  # La sesión de voz. CloudFront reenvía WebSockets, pero solo si el
+  # comportamiento no cachea y deja pasar todas las cabeceras — `Upgrade` y
+  # `Connection` incluidas, que es lo que hace la política "todo menos Host".
+  ordered_cache_behavior {
+    path_pattern           = "/voz/sesion"
+    target_origin_id       = "instancia"
+    viewer_protocol_policy = "redirect-to-https"
+
+    allowed_methods = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
+    cached_methods  = ["GET", "HEAD"]
+
+    cache_policy_id          = data.aws_cloudfront_cache_policy.sin_cache.id
+    origin_request_policy_id = data.aws_cloudfront_origin_request_policy.todo_menos_host.id
+
+    # Sin compresión: comprimir un flujo de audio binario cuadro a cuadro solo
+    # añade latencia a algo que ya viene comprimido por el códec.
+    compress = false
+  }
+
   # Lo único que se cachea: los estáticos de Next, que llevan hash en el nombre
   # y por tanto son inmutables. Es lo que hace que la pantalla abra rápido con
   # señal mala, y es también lo que descarga a la instancia — una t4g pequeña no

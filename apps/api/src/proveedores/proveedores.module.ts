@@ -10,6 +10,9 @@ import { DeepgramVoz } from './voz/deepgram';
 import { PROVEEDOR_VOZ } from './voz/proveedor';
 import { VozSimulada } from './voz/simulado';
 import { VozController } from './voz/voz.controller';
+import { PuenteDeVoz } from './agente-voz/puente-voz';
+import { CatalogoModule } from '../modules/catalogo/catalogo.module';
+import { IdentidadModule } from '../modules/identidad/identidad.module';
 
 /**
  * Proveedores externos, todos detrás de interfaz con alternativa (Restricción 5).
@@ -19,7 +22,7 @@ import { VozController } from './voz/voz.controller';
  * y conmutar de proveedor no exige tocar una línea de negocio.
  */
 @Module({
-  imports: [DominiosModule, CapturaModule],
+  imports: [DominiosModule, CapturaModule, CatalogoModule, IdentidadModule],
   controllers: [VozController],
   providers: [
     {
@@ -33,7 +36,8 @@ import { VozController } from './voz/voz.controller';
           ? InterpretacionAnthropic
           : InterpretacionSimulada,
     },
+    PuenteDeVoz,
   ],
-  exports: [PROVEEDOR_VOZ, PROVEEDOR_INTERPRETACION],
+  exports: [PROVEEDOR_VOZ, PROVEEDOR_INTERPRETACION, PuenteDeVoz],
 })
 export class ProveedoresModule {}

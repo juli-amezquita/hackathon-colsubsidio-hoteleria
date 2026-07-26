@@ -67,7 +67,7 @@ function AuditorReport() {
 
   return (
     <div className="min-h-dvh bg-background pb-40">
-      <TopBar subtitle={`${warehouse.name} · ${warehouse.city}`} roleTag="Auditor" />
+      <TopBar subtitle={warehouse.name} roleTag="Auditor" />
 
       <main className="mx-auto max-w-md px-4">
         <button

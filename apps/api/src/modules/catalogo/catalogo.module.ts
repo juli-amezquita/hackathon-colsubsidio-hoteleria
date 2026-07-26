@@ -21,6 +21,6 @@ import { ResolucionService } from './resolucion.service';
     ResolucionService,
     { provide: PROVEEDOR_CATALOGO, useExisting: ResolucionService },
   ],
-  exports: [PROVEEDOR_CATALOGO],
+  exports: [PROVEEDOR_CATALOGO, ResolucionService],
 })
 export class CatalogoModule {}

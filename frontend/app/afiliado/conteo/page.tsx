@@ -5,7 +5,6 @@ import {
   Check,
   Copy,
   HelpCircle,
-  Keyboard,
   Pencil,
   Plus,
   RotateCcw,
@@ -22,11 +21,12 @@ import { TopBar } from '@/components/top-bar'
 import { UnitSelect } from '@/components/unit-select'
 import { Button } from '@/components/ui-button'
 import { ValidationDialog, type ValidationAlert } from '@/components/validation-dialog'
-import { VoiceRecorder } from '@/components/voice-recorder'
+import { AgentePanel } from '@/components/agente-panel'
+import type { ItemConfirmado } from '@/lib/agente-voz'
 import { deleteAudio, saveAudio } from '@/lib/audio-store'
 import type { ArticuloDeTrabajo } from '@cci/contracts'
 
-import type { Unit, Warehouse } from '@/lib/data'
+import { unidadDesdeServidor, type Unit, type Warehouse } from '@/lib/data'
 import { ANOMALY_MAX, findDuplicate, formatUnit, orderedEntries, progress } from '@/lib/inventory'
 import { useCountStore, type CountEntry } from '@/lib/store'
 import { parseSpeech } from '@/lib/voice'
@@ -92,17 +92,6 @@ function Conteo() {
     pendingAudioRef.current = null
   }
 
-  function handleResult(text: string, audioBlob: Blob | null) {
-    const parsed = parseSpeech(text)
-    pendingAudioRef.current = audioBlob
-    setTranscript(text)
-    setName(parsed.name)
-    setQuantity(parsed.quantity ?? 0)
-    setUnit(parsed.unit ?? 'unidad')
-    setUnclear(parsed.needsReview)
-    setEditingId(null)
-    setPhase('confirm')
-  }
 
   function startManual() {
     resetForm()
@@ -151,6 +140,36 @@ function Conteo() {
       })
     }
     return alerts
+  }
+
+  /**
+   * El agente confirmó un artículo con el operario. Entra a la cola.
+   *
+   * El servidor NO lo guarda por su cuenta: se encola aquí, igual que un
+   * conteo escrito, con la misma clave de idempotencia y el mismo reintento
+   * (F-18). Si la ruta por voz escribiera directo, un corte de Wi-Fi perdería
+   * lo dictado y conservaría lo tecleado — y nadie sabría por qué.
+   */
+  function confirmarPorVoz(item: ItemConfirmado) {
+    const articulo = catalogo.find((a) => a.articuloId === item.articuloId)
+    if (!articulo) return
+
+    // La unidad del artículo cuando el operario no dijo ninguna. Es la que el
+    // catálogo declara, no una suposición nuestra.
+    const unidadId = item.unidad ? idDeUnidad(unidadDesdeServidor(item.unidad)) : null
+
+    addEntry({
+      articuloId: articulo.articuloId,
+      name: articulo.nombre,
+      quantity: item.cantidad,
+      unit: unidadDesdeServidor(item.unidad ?? articulo.unidadEsperada.nombre),
+      unidadId: unidadId ?? articulo.unidadEsperada.id,
+      isAnomaly: item.cantidad > ANOMALY_MAX,
+      isDuplicate: Boolean(findDuplicate(articulo.nombre, entries)),
+      // Ya se confirmó hablando: no hay nada que revisar en pantalla.
+      needsReview: false,
+      transcript: item.dictado,
+    })
   }
 
   async function persist() {
@@ -233,7 +252,7 @@ function Conteo() {
     <div className="min-h-dvh bg-background pb-28">
       <TopBar
         title={warehouse.name}
-        subtitle={`${warehouse.city} · Conteo por voz`}
+        subtitle="Conteo por voz"
         backHref="/afiliado"
         roleTag="Afiliado"
       />
@@ -260,19 +279,19 @@ function Conteo() {
 
         {/* Zona de captura */}
         {phase === 'idle' ? (
-          <section className="mt-4 rounded-2xl border border-border bg-card p-5 shadow-sm">
-            <VoiceRecorder onResult={handleResult} />
-            <div className="mt-4 border-t border-border pt-3 text-center">
-              <button
-                type="button"
-                onClick={startManual}
-                className="inline-flex items-center gap-1.5 text-sm font-semibold text-primary underline-offset-2 hover:underline"
-              >
-                <Keyboard className="h-4 w-4" />
-                Agregar manualmente
-              </button>
-            </div>
-          </section>
+          <div className="mt-4">
+            {active?.rondaId ? (
+              <AgentePanel
+                rondaId={active.rondaId}
+                onConfirmar={confirmarPorVoz}
+                onEscribir={startManual}
+              />
+            ) : (
+              <section className="rounded-2xl border border-border bg-card p-5 text-center shadow-sm">
+                <p className="text-sm text-muted-foreground">Abriendo la ronda…</p>
+              </section>
+            )}
+          </div>
         ) : (
           <section className="mt-4 rounded-2xl border border-border bg-card p-5 shadow-sm">
             <h2 className="font-display text-base font-bold text-foreground">

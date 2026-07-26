@@ -1,7 +1,7 @@
 'use client'
 
 import { CheckCircle2, ChevronRight, MapPin, Search, Warehouse as WarehouseIcon } from 'lucide-react'
-import type { Warehouse } from '@/lib/data'
+import { describir, type Warehouse } from '@/lib/data'
 import { useRouter } from 'next/navigation'
 import { useMemo, useState } from 'react'
 import { RequireRole } from '@/components/require-role'
@@ -28,7 +28,7 @@ function SelectWarehouse() {
     const q = normalizeName(query)
     if (!q) return warehouses_disponibles
     return warehouses_disponibles.filter((w: Warehouse) =>
-      normalizeName(`${w.name} ${w.city} ${w.zone} ${w.id}`).includes(q),
+      normalizeName(`${w.name} ${w.city ?? ''} ${w.zone ?? ''}`).includes(q),
     )
   }, [query])
 
@@ -85,7 +85,7 @@ function SelectWarehouse() {
                     <p className="truncate font-semibold text-foreground">{w.name}</p>
                     <p className="flex items-center gap-1 truncate text-xs text-muted-foreground">
                       <MapPin className="h-3 w-3 shrink-0" />
-                      {w.city} · {w.id}
+                      {describir(w)}
                     </p>
                   </div>
                   {submitted ? (

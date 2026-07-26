@@ -1,5 +1,5 @@
 import { FRACCIONES_VERBALES, leerNumero } from './numeros';
-import { esPalabraDeUnidad, leerUnidad, type UnidadCanonica } from './unidades';
+import { esEmpaque, esPalabraDeUnidad, leerUnidad, type UnidadCanonica } from './unidades';
 
 export * from './numeros';
 export * from './unidades';
@@ -19,6 +19,7 @@ export * from './unidades';
  */
 
 export type FalloParse =
+  | 'ambiguo'
   | 'fraccion_verbal'
   | 'sin_cantidad'
   | 'sin_nombre'
@@ -28,7 +29,18 @@ export type FalloParse =
 export interface Segmentacion {
   readonly nombre: string;
   readonly cantidad: number;
-  readonly unidad: UnidadCanonica;
+  /**
+   * `null` cuando el operario NO dijo unidad: "diez papas".
+   *
+   * No es un fallo. El artículo del catálogo declara la suya, y en una bodega
+   * donde las papas se cuentan por unidad, exigir que lo diga es pedirle que
+   * repita lo que el sistema ya sabe. Quien resuelve el nombre la completa.
+   *
+   * Tiene además una consecuencia buena: la alerta de unidad equivocada
+   * (FR-2.1) solo puede dispararse cuando el operario AFIRMÓ una unidad. Si no
+   * afirmó nada, no hay nada que contradecir.
+   */
+  readonly unidad: UnidadCanonica | null;
 }
 
 export type ResultadoParse =
@@ -36,7 +48,8 @@ export type ResultadoParse =
       readonly ok: true;
       readonly nombre: string;
       readonly cantidad: number;
-      readonly unidad: UnidadCanonica;
+      /** `null` si el operario no dijo unidad. Ver {@link Segmentacion.unidad}. */
+      readonly unidad: UnidadCanonica | null;
       /**
        * El nombre extraído TERMINA en algo que parece una cantidad
        * ("aceite de oliva 10 ml"). La gramática no puede resolverlo: puede ser
@@ -54,6 +67,16 @@ export type ResultadoParse =
       readonly ok: false;
       readonly motivo: FalloParse;
       readonly detalle?: string;
+      /**
+       * Las dos lecturas, cuando el dictado admite ambas y no coinciden.
+       *
+       * "dos aceite de oliva 3 litros" puede ser *dos* envases del aceite de
+       * tres litros, o *tres litros* de un producto llamado "dos aceite de
+       * oliva". Las dos son gramaticalmente correctas y el sistema no tiene
+       * cómo saber cuál quiso decir: pregunta (FR-1.27). Elegir la más probable
+       * es exactamente la clase de acierto que un día se equivoca en silencio.
+       */
+      readonly lecturas?: readonly Segmentacion[];
     };
 
 /** Sin tildes, sin puntuación de sobra, en minúsculas. Igual que el catálogo. */
@@ -82,29 +105,33 @@ export function parsear(texto: string): ResultadoParse {
     };
   }
 
-  // Se prueba la cola MÁS LARGA primero y gana la primera válida.
+  // Las dos formas de decir lo mismo, y las dos son español corriente:
   //
-  // Al revés —la más corta— "ciento veintitres kilos" se partiría en
-  // "veintitres kilos" dejando "ciento" pegado al nombre, y "dos mil unidades"
-  // daría 1000. La cola larga es siempre la lectura correcta del número.
-  let elegida: Segmentacion | null = null;
+  //   · COLA  — "platos cuadrados, tres unidades"
+  //   · CABEZA — "tres unidades de platos cuadrados"
+  //
+  // La versión anterior solo entendía la cola. En campo eso significaba que el
+  // operario dictaba bien, el sistema respondía "no entendí la cantidad" y le
+  // tocaba escribir a mano lo que acababa de decir — que es justo lo que este
+  // sistema existe para evitar.
+  const porCola = buscarCola(palabras);
+  if (typeof porCola === 'string') return falloDeCola(porCola);
 
-  for (let corte = 0; corte < palabras.length; corte += 1) {
-    const s = intentarCola(palabras.slice(0, corte), palabras.slice(corte));
+  const porCabeza = buscarCabeza(palabras);
+  if (typeof porCabeza === 'string') return falloDeCola(porCabeza);
 
-    if (s === 'fraccion') return { ok: false, motivo: 'fraccion_verbal' };
-    if (s === 'unidad_no_soportada') {
-      return {
-        ok: false,
-        motivo: 'unidad_no_soportada',
-        detalle: 'La unidad dicha no está en el catálogo. No se convierte por cuenta propia.',
-      };
-    }
-    if (s) {
-      elegida = s;
-      break;
-    }
+  // Si las dos formas leen y NO dicen lo mismo, el dictado es ambiguo de
+  // verdad. No se prefiere una: se pregunta.
+  if (porCola && porCabeza && !mismaLectura(porCola, porCabeza)) {
+    return {
+      ok: false,
+      motivo: 'ambiguo',
+      detalle: 'El dictado admite dos lecturas y ninguna es más correcta que la otra.',
+      lecturas: [porCola, porCabeza],
+    };
   }
+
+  const elegida = porCola ?? porCabeza;
 
   if (!elegida) {
     return {
@@ -140,6 +167,80 @@ function terminaEnCantidad(nombre: string): boolean {
   const penultima = p[p.length - 2]!;
 
   return esPalabraDeUnidad(ultima) && leerNumero([penultima]).ok;
+}
+
+function mismaLectura(a: Segmentacion, b: Segmentacion): boolean {
+  return a.cantidad === b.cantidad && a.unidad === b.unidad && a.nombre === b.nombre;
+}
+
+function falloDeCola(motivo: 'fraccion' | 'unidad_no_soportada'): ResultadoParse {
+  return motivo === 'fraccion'
+    ? { ok: false, motivo: 'fraccion_verbal' }
+    : {
+        ok: false,
+        motivo: 'unidad_no_soportada',
+        detalle: 'La unidad dicha no está en el catálogo. No se convierte por cuenta propia.',
+      };
+}
+
+/**
+ * `<nombre> <número> <unidad>` — la cola numérica.
+ *
+ * Se prueba la cola MÁS LARGA primero. Al revés, "ciento veintitres kilos" se
+ * partiría en "veintitres kilos" dejando "ciento" pegado al nombre, y "dos mil
+ * unidades" daría 1000.
+ */
+function buscarCola(palabras: readonly string[]): Segmentacion | 'fraccion' | 'unidad_no_soportada' | null {
+  for (let corte = 0; corte < palabras.length; corte += 1) {
+    const s = intentarCola(palabras.slice(0, corte), palabras.slice(corte));
+    if (s === 'fraccion' || s === 'unidad_no_soportada') return s;
+    if (s) return s;
+  }
+  return null;
+}
+
+/**
+ * `<número> [unidad] [de] <nombre>` — la cantidad al principio.
+ *
+ * La unidad es opcional: "diez papas" es una frase completa y el catálogo sabe
+ * en qué se cuentan las papas. El "de" se descarta si está.
+ *
+ * Lo que NO se hace: tratar una palabra desconocida como unidad. En este
+ * catálogo "caja", "bolsa" y "paquete" aparecen en 70 NOMBRES de artículo
+ * —`CAJA PARA PAPAS PAQ X100`—, así que leerlas como unidad convertiría un
+ * producto en una medida.
+ */
+function buscarCabeza(palabras: readonly string[]): Segmentacion | 'fraccion' | 'unidad_no_soportada' | null {
+  const numero = leerNumero(palabras);
+  if (!numero.ok) return numero.motivo === 'fraccion_verbal' ? 'fraccion' : null;
+
+  let resto = palabras.slice(numero.consumidos);
+  if (resto.length === 0) return null; // solo un número: no hay artículo
+
+  const unidad = leerUnidad(resto[0]);
+  // Solo las medidas que exigirían CONVERSIÓN se rechazan: "quinientos gramos"
+  // son 0,5 kg y hacer esa cuenta en silencio escribiría en el libro una cifra
+  // que nadie dijo.
+  if (unidad.tipo === 'no_soportada') return 'unidad_no_soportada';
+
+  let canonica: UnidadCanonica | null = null;
+  if (unidad.tipo === 'canonica') {
+    canonica = unidad.unidad;
+    resto = resto.slice(1);
+  }
+  // Si lo que sigue al número es un empaque —"diez PAQUETES de papas"— se queda
+  // en el nombre y la unidad la pone el catálogo. Ver `EMPAQUES`.
+
+  if (!canonica && !esEmpaque(resto[0] ?? '') && (resto[0] === 'de' || resto[0] === 'del')) {
+    resto = resto.slice(1);
+  } else if (canonica && (resto[0] === 'de' || resto[0] === 'del')) {
+    resto = resto.slice(1);
+  }
+
+  const nombre = resto.join(' ').replace(/^[,\s]+|[,\s]+$/g, '');
+  if (!nombre) return null;
+
+  return { nombre, cantidad: numero.valor, unidad: canonica };
 }
 
 type IntentoCola = Segmentacion | 'fraccion' | 'unidad_no_soportada' | null;

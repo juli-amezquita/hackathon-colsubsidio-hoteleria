@@ -52,6 +52,21 @@ export function parseSpeech(transcript: string): ParsedSpeech {
   const r = parsear(transcript)
 
   if (!r.ok) {
+    // El dictado admite dos lecturas y ninguna es más correcta: se dicen las
+    // dos y decide la persona (FR-1.27).
+    if (r.motivo === 'ambiguo' && r.lecturas?.length === 2) {
+      const [a, b] = r.lecturas
+      return {
+        name: transcript.trim(),
+        quantity: null,
+        unit: null,
+        needsReview: true,
+        reason:
+          `Se puede entender de dos formas: ${a!.cantidad} de "${a!.nombre}", ` +
+          `o ${b!.cantidad} de "${b!.nombre}". Confirme cuál.`,
+      }
+    }
+
     return {
       // Se conserva lo dictado: el operario corrige sobre lo que dijo, no
       // sobre una pantalla en blanco.
@@ -66,7 +81,9 @@ export function parseSpeech(transcript: string): ParsedSpeech {
   return {
     name: r.nombre,
     quantity: r.cantidad,
-    unit: unidadDesdeServidor(r.unidad),
+    // `null` cuando el operario no dijo unidad ("diez papas"): la pone el
+    // artículo del catálogo, no esta función.
+    unit: r.unidad ? unidadDesdeServidor(r.unidad) : null,
     // Si el nombre termina en algo que parece cantidad, la gramática no puede
     // decidirlo sola: lo decide la persona mirando el catálogo.
     needsReview: r.nombreLlevaCantidad,

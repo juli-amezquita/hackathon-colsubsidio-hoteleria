@@ -1,7 +1,7 @@
 'use client'
 
 import { AlertTriangle, CheckCircle2, ChevronRight, Inbox, MapPin } from 'lucide-react'
-import type { Warehouse } from '@/lib/data'
+import { describir, type Warehouse } from '@/lib/data'
 import { useRouter } from 'next/navigation'
 import { useMemo } from 'react'
 import { ProgressBar } from '@/components/progress-bar'
@@ -92,7 +92,7 @@ function AuditorHome() {
                       </p>
                       <p className="flex items-center gap-1 truncate text-xs text-muted-foreground">
                         <MapPin className="h-3 w-3 shrink-0" />
-                        {warehouse.city} · {warehouse.id}
+                        {describir(warehouse)}
                       </p>
                     </div>
                     {done ? (

@@ -38,6 +38,17 @@ export function unidadDesdeServidor(nombre: string): Unit {
   return (entrada?.[0] as Unit | undefined) ?? 'unidad'
 }
 
+/**
+ * Cómo se describe una bodega en una línea.
+ *
+ * Existía como `${w.city} · ${w.id}` en seis pantallas y pintaba **"undefined"**
+ * en todas, porque el cliente no entrega ciudad: sus bodegas se llaman
+ * `ZOOLOGICO` y `STOCK ALMACEN AYB`, y no hay más. Se muestra lo que sí hay.
+ */
+export function describir(w: Warehouse): string {
+  return [w.city, w.zone].filter(Boolean).join(' · ') || w.name
+}
+
 export interface Warehouse {
   id: string
   name: string

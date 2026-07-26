@@ -51,7 +51,7 @@ function Resumen() {
           </p>
 
           <div className="mt-6 w-full rounded-2xl border border-border bg-card p-4 text-left shadow-sm">
-            <Row label="Bodega" value={`${warehouse.name} · ${warehouse.city}`} />
+            <Row label="Bodega" value={warehouse.name} />
             <Row label="Productos contados" value={String(total)} />
             <Row label="Por validar" value={String(flagged)} />
             <Row label="Responsable" value={session?.name ?? '—'} />

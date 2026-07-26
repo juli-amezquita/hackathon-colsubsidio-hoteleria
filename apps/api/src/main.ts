@@ -12,6 +12,7 @@ import { REDACCION_PINO } from './platform/logs/redaccion';
 import { cerrarRedis } from './platform/redis/cliente';
 import { registrarSeguridad } from './platform/seguridad/registrar';
 import { detenerTelemetria, iniciarTelemetria } from './platform/telemetria';
+import { PuenteDeVoz } from './proveedores/agente-voz/puente-voz';
 
 async function arrancar(): Promise<void> {
   iniciarTelemetria(); // antes que nada, para instrumentar el resto
@@ -37,6 +38,11 @@ async function arrancar(): Promise<void> {
   // El proceso es stateless: cualquier réplica atiende cualquier petición y un
   // despliegue es un reemplazo, sin draining ni sticky sessions.
   await app.listen({ port: c.API_PORT, host: '0.0.0.0' });
+
+  // El WebSocket de voz se engancha DESPUÉS de escuchar: necesita el servidor
+  // HTTP real, y Fastify no lo tiene hasta que arranca. Un WebSocket no pasa
+  // por los guardas de Nest, así que el puente verifica la sesión él mismo.
+  app.get(PuenteDeVoz).montar(app.getHttpServer());
 
   for (const senal of ['SIGINT', 'SIGTERM'] as const) {
     process.once(senal, () => {

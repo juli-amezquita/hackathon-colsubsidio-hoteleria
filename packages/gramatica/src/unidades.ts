@@ -31,10 +31,34 @@ const SINONIMOS: Record<string, UnidadCanonica> = {
 const RECONOCIDAS_NO_SOPORTADAS: Record<string, string> = {
   gramo: 'Kilogram', gramos: 'Kilogram', g: 'Kilogram', gr: 'Kilogram',
   mililitro: 'Liter', mililitros: 'Liter', ml: 'Liter',
-  caja: 'Unidad', cajas: 'Unidad', paquete: 'Unidad', paquetes: 'Unidad',
-  bulto: 'Unidad', bultos: 'Unidad', rollo: 'Unidad', rollos: 'Unidad',
-  bolsa: 'Unidad', bolsas: 'Unidad',
 };
+
+/**
+ * Palabras de EMPAQUE: "caja", "paquete", "bulto", "bolsa", "rollo".
+ *
+ * Estaban en la lista de arriba y era un error de categoría. La lista de arriba
+ * es de medidas que exigirían una CONVERSIÓN —"quinientos gramos" son 0,5 kg— y
+ * el sistema se niega a hacerla en silencio porque escribiría en el libro una
+ * cifra que el operario nunca dijo.
+ *
+ * Un empaque no exige aritmética ninguna. Y en ESTE catálogo tampoco es una
+ * unidad: `caja`, `bolsa`, `paquete` y `bulto` aparecen en 70 NOMBRES de
+ * artículo —`CAJA PARA PAPAS PAQ X100`, `BOLSA EMPAQUE AL VACIO*30CM*20CM*70
+ * MIC`—. Son producto, no medida.
+ *
+ * La consecuencia práctica: "diez paquetes de papas" ya no se rechaza con un
+ * "esa unidad no está en el catálogo" —que obligaba al operario a decir "diez
+ * unidades de paquetes de papas"—, sino que "paquetes de papas" se busca como
+ * nombre y la unidad la pone el artículo.
+ */
+const EMPAQUES = new Set([
+  'caja', 'cajas', 'paquete', 'paquetes', 'bulto', 'bultos',
+  'rollo', 'rollos', 'bolsa', 'bolsas', 'pack', 'packs',
+]);
+
+export function esEmpaque(palabra: string): boolean {
+  return EMPAQUES.has(palabra);
+}
 
 export type LecturaUnidad =
   | { readonly tipo: 'canonica'; readonly unidad: UnidadCanonica }
@@ -54,5 +78,5 @@ export function leerUnidad(palabra: string | undefined): LecturaUnidad {
 }
 
 export function esPalabraDeUnidad(palabra: string): boolean {
-  return palabra in SINONIMOS || palabra in RECONOCIDAS_NO_SOPORTADAS;
+  return palabra in SINONIMOS || palabra in RECONOCIDAS_NO_SOPORTADAS || EMPAQUES.has(palabra);
 }

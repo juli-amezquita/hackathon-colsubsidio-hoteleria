@@ -123,3 +123,80 @@ describe('Normalización y números sueltos', () => {
     if (r.ok) expect(r.valor).toBe(valor);
   });
 });
+
+describe('las dos formas de dictar, porque las dos son español', () => {
+  // El fallo que motivó esto se vio en producción: el operario dictó
+  // "10 paquetes de papas", el sistema respondió "no entendí la cantidad" y le
+  // tocó escribir a mano lo que acababa de decir en voz alta.
+  it.each([
+    ['platos cuadrados, tres unidades', 3, 'Unidad', 'platos cuadrados'],
+    ['tres unidades de platos cuadrados', 3, 'Unidad', 'platos cuadrados'],
+    ['aceite, dos litros', 2, 'Liter', 'aceite'],
+    ['dos litros de aceite', 2, 'Liter', 'aceite'],
+  ])('«%s» → %i %s de "%s"', (dictado, cantidad, unidad, nombre) => {
+    const r = parsear(dictado);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.cantidad).toBe(cantidad);
+    expect(r.unidad).toBe(unidad);
+    expect(r.nombre).toBe(nombre);
+  });
+
+  it('sin unidad dicha, la pone el catálogo — no la gramática', () => {
+    const r = parsear('diez papas');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.cantidad).toBe(10);
+    // `null` y NO 'Unidad': afirmar una unidad que el operario no dijo haría
+    // imposible que salte la alerta de unidad equivocada (FR-2.1).
+    expect(r.unidad).toBeNull();
+    expect(r.nombre).toBe('papas');
+  });
+});
+
+describe('empaque no es unidad: en este catálogo es nombre de producto', () => {
+  // `caja`, `bolsa`, `paquete` y `bulto` aparecen en 70 nombres del catálogo
+  // real (`CAJA PARA PAPAS PAQ X100`). Leerlas como unidad convertía un
+  // producto en una medida y obligaba a decir "diez unidades de paquetes de
+  // papas", que nadie dice.
+  it.each([
+    ['10 paquetes de papas', 10, 'paquetes de papas'],
+    ['dos cajas para papas', 2, 'cajas para papas'],
+    ['tres bolsas de empaque al vacio', 3, 'bolsas de empaque al vacio'],
+  ])('«%s» → %i de "%s", sin unidad', (dictado, cantidad, nombre) => {
+    const r = parsear(dictado);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.cantidad).toBe(cantidad);
+    expect(r.nombre).toBe(nombre);
+    expect(r.unidad).toBeNull();
+  });
+
+  it('una medida que SÍ exigiría convertir se sigue rechazando', () => {
+    // "Quinientos gramos" son 0,5 kg. Hacer esa cuenta en silencio escribiría
+    // en el libro una cifra que el operario nunca dijo.
+    const r = parsear('quinientos gramos de sal');
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.motivo).toBe('unidad_no_soportada');
+  });
+});
+
+describe('cuando el dictado admite dos lecturas, se pregunta', () => {
+  it('no elige la más probable: devuelve las dos', () => {
+    // Este es el caso peligroso de verdad. Antes ganaba la cola en silencio:
+    // el operario decía "dos" y el sistema anotaba "3 litros" sin marcar nada.
+    // Un conteo equivocado con plena confianza es el fallo más caro del sistema.
+    const r = parsear('dos aceite de oliva 3 litros');
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.motivo).toBe('ambiguo');
+    expect(r.lecturas).toHaveLength(2);
+    expect(r.lecturas?.map((l) => l.cantidad).sort()).toEqual([2, 3]);
+  });
+
+  it('si las dos lecturas coinciden, no hay ambigüedad que preguntar', () => {
+    const r = parsear('aceite, dos litros');
+    expect(r.ok).toBe(true);
+  });
+});

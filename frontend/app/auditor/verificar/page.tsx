@@ -60,7 +60,7 @@ function AuditorVerify() {
 
   return (
     <div className="min-h-dvh bg-background pb-28">
-      <TopBar subtitle={`${warehouse.name} · ${warehouse.city}`} roleTag="Auditor" />
+      <TopBar subtitle={warehouse.name} roleTag="Auditor" />
 
       <main className="mx-auto max-w-md px-4">
         <div className="flex items-center justify-between pt-4">
