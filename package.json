@@ -8,7 +8,7 @@
   },
   "packageManager": "pnpm@10.31.0",
   "scripts": {
-    "dev": "pnpm --filter @cci/api dev",
+    "dev": "pnpm --parallel --filter @cci/api --filter @cci/web dev",
     "build": "pnpm --filter @cci/contracts build && pnpm --filter @cci/api build",
     "typecheck": "pnpm -r typecheck",
     "lint": "eslint .",
@@ -18,7 +18,9 @@
     "db:reset": "pnpm --filter @cci/api db:reset",
     "db:verificar": "pnpm --filter @cci/api exec tsx scripts/migrar.ts verificar",
     "verify": "pnpm build && pnpm typecheck && pnpm lint && pnpm test",
-    "db:seed": "pnpm --filter @cci/api db:seed"
+    "db:seed": "pnpm --filter @cci/api db:seed",
+    "dev:api": "pnpm --filter @cci/api dev",
+    "dev:web": "pnpm --filter @cci/web dev"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",
