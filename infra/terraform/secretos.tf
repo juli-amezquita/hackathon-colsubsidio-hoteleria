@@ -122,6 +122,15 @@ resource "aws_ssm_parameter" "conmutadores" {
     # usa: esto declara lo que de verdad está pasando.
     PROVEEDOR_AGENTE_VOZ = "gemini"
 
+    # Quién PRONUNCIA. Oír y hablar son proveedores distintos: escuchar sigue
+    # siendo Gemini Live, hablar es Polly.
+    #
+    # La capa gratuita de Gemini da DIEZ síntesis al día por modelo y un conteo
+    # real las agota en los primeros minutos. Polly no tiene ese techo, dice el
+    # texto EXACTO —no es un modelo conversacional que elija qué decir— y no
+    # necesita credencial: la instancia firma con su rol de IAM.
+    PROVEEDOR_TTS = "polly"
+
     # El árbitro que ordena la evidencia del caso. `determinista` NO es un
     # apaño: ordena los conteos y formula las preguntas sin modelo, y nunca
     # recomienda una cifra. Se queda aquí hasta que haya una clave real de

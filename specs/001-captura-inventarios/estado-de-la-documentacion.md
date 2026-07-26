@@ -1,6 +1,6 @@
 # Estado de la documentación
 
-**Fecha de la revisión**: 2026-07-26 · **Rama**: `integracion` · **Último commit revisado**: `ad899bb`
+**Fecha de la revisión**: 2026-07-26 · **Rama**: `integracion` · **Último commit de código revisado**: `ad899bb`
 
 Los documentos de este directorio se escribieron **antes** que buena parte del código. Este archivo dice, documento por documento, qué sigue siendo cierto y qué no. No es una lista de tareas: es un mapa para que quien lea la documentación sepa dónde puede confiar en ella.
 
@@ -28,9 +28,9 @@ La distinción importa: `research.md` cuenta **por qué se decidió** algo en su
 | `data-model.md` | **DESFASADO — CORREGIDO HOY** |
 | `tasks.md` | **DESFASADO** — el reparto de trabajo se apoya en una premisa caída |
 | `quickstart.md` | **DESFASADO — CORREGIDO HOY** |
-| `entrega-frontend.md` | *(ver sección)* |
-| `barrido-qa.md` | *(ver sección)* |
-| `dashboard-administrativo.md` | *(ver sección)* |
+| `entrega-frontend.md` | **DESFASADO** — dos instrucciones suyas ya no se pueden ejecutar |
+| `barrido-qa.md` | **DESFASADO** — sus cuatro hallazgos «ROMPE» ya se corrigieron |
+| `dashboard-administrativo.md` | **AL DÍA** — los 7 endpoints y las 4 pantallas coinciden |
 | `infra/terraform/README.md` | **DESFASADO** |
 | `.env.example` | **DESFASADO** — nombres de variable que el código no lee |
 
@@ -174,6 +174,58 @@ El documento pedía correr comandos que **nunca existieron**. Lo corregido:
 
 ---
 
+## `dashboard-administrativo.md` — AL DÍA
+
+Es el documento más fiel del directorio, y era el más fácil de fallar por ser el más nuevo y el más largo. **Los siete endpoints existen con ese nombre, esa ruta, esos parámetros y esos roles**; las cuatro pantallas existen en `/admin`, `/admin/detalle`, `/admin/historia` y `/admin/autopulido`, las cuatro tras `RequireRole role="admin"`; los croquis de §3 corresponden al código; la paleta validada contra daltonismo es la misma en `globals.css`. Cero discrepancias de contrato.
+
+Cuatro correcciones menores:
+
+1. **§2 afirma de más.** Dice que «*todas* las consultas —sin excepción— llevan `JOIN usuario_bodega`». La primera consulta de `periodos()` **no lo lleva**: agrega `cierre_inventario` sobre todas las bodegas, así que el `bodegasCerradas` de cada mes cuenta cierres de bodegas no asignadas al usuario. Es un conteo, no una cifra de inventario, pero desmiente el «sin excepción».
+2. **Las referencias de línea se corrieron ~8 líneas** en `metricas.service.ts` y los rangos de `0016_periodos.up.sql`. Los anclajes puntuales (el `REVOKE`, el `GRANT`, el índice por código, el comentario del `NULL`) sí son exactos.
+3. **Omisión**: §2 atribuye el aislamiento por bodega solo al `JOIN`. El candado real contra `?bodega=<uuid ajeno>` es `BodegaGuard`, global desde `main.ts`, que extrae precisamente `query['bodega']`. Merece una línea.
+4. **§6.2 «el sistema aún no ha cerrado ningún mes»** es un hecho de la base, no del código. Caduca solo.
+
+---
+
+## `entrega-frontend.md` — DESFASADO
+
+Fechado el 2026-07-25. Todo lo de infraestructura y voz cambió después, y dos de los siete puntos harían perder medio día a quien lo siga al pie de la letra:
+
+1. **§«Dónde se publica el PWA — esto no es negociable»: el bucket ya no existe.** Manda `aws s3 sync ./dist s3://cci-mvp-pwa-83e731b4 --delete`. El único bucket declarado en Terraform es el de evidencia. CloudFront tiene **un solo origen, la instancia**, y `cdn.tf` explica el cambio. El razonamiento sobre la cookie `SameSite=Strict` sigue siendo correcto; el comando y el destino, no.
+2. **La tabla de reparto de rutas está incompleta**: le faltan `/metricas` y `/presencia`. El reparto verdadero está en `infra/nginx.conf`, con los dos WebSocket (`/voz/sesion` y `/presencia`) en bloques `location =` propios. «Todo lo demás» ya no va a un bucket: va al Next.js de la misma instancia.
+3. **El stack es otro.** Habla de `localhost:5173`, de `./dist` y de «un proxy en tu Vite (`server.proxy`)». Es Next.js 16 con App Router.
+4. **F-30: la Web Speech API se eliminó.** El documento exige confirmar con `speechSynthesis` del navegador (`es-CO`, con reserva a `es-419`) y argumenta que «es gratis y funciona sin red». No queda ni una ocurrencia en el frontend: la síntesis se movió al servidor, a Polly. La nota final del apartado plantea como plan B lo que ya es el diseño en producción.
+5. **F-36 es inejecutable.** «Pásalos tal cual a la conexión con Deepgram»: el navegador ya no abre conexión con Deepgram, abre `wss://…/voz/sesion?ronda=`, y los *keyterms* los inyecta el backend. `POST /voz/token/:rondaId` sigue vivo y su cliente `credencialDeVoz` **no tiene un solo llamador**.
+6. **No menciona el rol `admin` ni el tablero, ni una vez** en sus 268 líneas. Tampoco describe el enrutado por rol tras el login, que sí existe: `INICIO[role]` en `frontend/lib/data.ts` manda `operador→/afiliado`, `auditor→/auditor`, y `administrador` **y `supervisor`** → `/admin`.
+7. **Los usuarios de prueba son cuatro, no tres**: falta `1000000004`, Supervisor.
+
+**Sigue siendo cierto**: F-18, F-21, F-21b, F-22, F-34 (los cinco valores de `resultado`, `exigeEvidencia` y los `bloqueos`), F-35, el aviso de que `POST …/cierre` y `…/envio` van sin cuerpo, y la advertencia del puerto 3000.
+
+---
+
+## `barrido-qa.md` — DESFASADO (por buenas razones: se corrigió lo que denunciaba)
+
+**Los cuatro hallazgos marcados «ROMPE» ya están corregidos** y el documento no lo dice, así que hoy asusta más de lo que debe. Verificado en código, no solo en los mensajes de commit:
+
+| Hallazgo | Estado |
+|---|---|
+| §2.1 El Auditor no puede resolver un hallazgo | ✅ corregido (`b7ec76d`) |
+| §2.2 El Operador entierra su propia alerta | ✅ corregido (`e496773`): se rechaza con `DECISION_NO_PENDIENTE` y la consulta de pendientes es una sola |
+| §2.3 La prueba de la ceguera sin aserciones | ✅ corregido (`e496773`): +216 líneas, determinista y con aserción anti-vacío |
+| §2.4 Las cinco fallas de terreno | ✅ corregido (`dd04585`) |
+| §3 «Producción corre íntegramente en modo simulado» + `ORACLE_FUSION_USER` vs `ERP_USUARIO` | ✅ corregido en Terraform y en `config.ts` (`d086783`) — **pero sigue vivo en `.env.example`** |
+| §5 punto 7, mitad: `typecheck` en el frontend | ✅ corregido (`f9416cd`) |
+| §3 «ningún `fetch` lleva timeout» | 🟡 parcial: solo en la capa de síntesis |
+| §3 «lo que gasta el agente no se mide» | 🟡 parcial: la síntesis salió del cupo de Gemini a Polly; el tope y la telemetría siguen sin aparecer |
+
+**Siguen abiertos** (ningún archivo implicado se tocó desde el barrido): los ocho puntos de §3 Dominio; todo lo del agente de voz en `dialogo.ts` y `puente-voz.ts` (§5 punto 4); en Plataforma, el `SET ROLE` que nunca se ejecuta —cero ocurrencias de `SET ROLE` o `DATABASE_APP_ROLE` en `apps/api/src`, lo que significa que **la revocación del libro no está protegiendo a la aplicación en tiempo de ejecución** (§5 punto 5)—, la sesión no revocable, `X-Forwarded-For`, el outbox envenenado, el tramo CloudFront→origen en HTTP plano, los secretos por defecto, el `ssm:SendCommand` sobre `*` y el docker-compose en `0.0.0.0`; la otra mitad del punto 7 (CI sigue sin `next build` y sin construir la imagen); y todo §3 Cableado, con 21 de 40 rutas huérfanas.
+
+Un hallazgo suyo estaba descrito **de menos**: en FR-7.2 el cliente no ofrece «solo `csv`», ofrece `'csv' | 'json'`, y el servidor no conoce `json` — `formato === 'xlsx' ? 'xlsx' : 'csv'`, así que pedir `.json` devuelve un CSV **en silencio**.
+
+**Encabezado caducado**: dice «318/318 en verde (25 archivos)». Hoy `apps/api/test` tiene 26 y `slice1.e2e.spec.ts` creció 216 líneas. El número ya no corresponde a nada.
+
+---
+
 ## `infra/terraform/README.md` — DESFASADO
 
 Describe la infraestructura que **había**, no la que hay. Cuatro cosas:
@@ -241,3 +293,11 @@ No es documentación de producto, pero `quickstart.md` manda copiarlo y **no arr
 **No se corrigió aquí** porque es un archivo de configuración, no documentación. Es barato y vale la pena hacerlo.
 
 ---
+
+## Si solo hay tiempo para arreglar tres cosas
+
+1. **`plan.md` §2 y §6.1.** Es el documento que un técnico abre para saber con qué está hecho el sistema, y ocho de quince filas le mienten. La afirmación de que el frontend vive en otro repositorio es además la que arrastra a `tasks.md` entero.
+2. **`contracts/events.md`.** Promete ocho eventos y el sistema emite tres. Quien intente integrarse por evento —que es justo lo que invita a hacer el Principio IV— va a esperar mensajes que nunca llegan.
+3. **`entrega-frontend.md` §«Dónde se publica el PWA» y F-36.** Son instrucciones operativas que hoy fallan al ejecutarse: un bucket que no existe y una conexión a Deepgram que el navegador ya no abre.
+
+Y una de un minuto, fuera de este directorio: alinear `.env.example` con `config.ts`. Copiarlo tal cual deja el ERP sin credenciales aunque quien lo hizo crea haberlas puesto.
