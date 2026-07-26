@@ -6,6 +6,7 @@ import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fa
 import { AppModule } from './app.module';
 import { config } from './config';
 import { SesionService } from './modules/identidad/sesion.service';
+import { BodegaGuard } from './platform/autorizacion/bodega.guard';
 import { SesionGuard } from './platform/autorizacion/sesion.guard';
 import { cerrarConexion } from './platform/db/cliente';
 import { REDACCION_PINO } from './platform/logs/redaccion';
@@ -34,7 +35,12 @@ async function arrancar(): Promise<void> {
 
   // Guarda GLOBAL: sin @Roles ni @Publico, una ruta no la puede usar nadie.
   // Registrarla aquí y no ruta por ruta es lo que hace que el olvido sea seguro.
-  app.useGlobalGuards(new SesionGuard(app.get(Reflector), app.get(SesionService)));
+  // El orden importa: primero quién eres y qué rol tienes, después sobre qué
+  // bodega puedes actuar. `BodegaGuard` da por hecho que `req.usuario` ya está.
+  app.useGlobalGuards(
+    new SesionGuard(app.get(Reflector), app.get(SesionService)),
+    new BodegaGuard(),
+  );
 
   // El proceso es stateless: cualquier réplica atiende cualquier petición y un
   // despliegue es un reemplazo, sin draining ni sticky sessions.
