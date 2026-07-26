@@ -22,7 +22,7 @@ function Resumen() {
   const router = useRouter()
   const {
     ready, activeWarehouseId, active, submitCount, session, getWarehouse,
-    error, pendientes, alertasSinResponder, sostenerConteo,
+    error, alertasSinResponder, sostenerConteo,
   } = useCountStore()
   const [enviando, setEnviando] = useState(false)
 
@@ -30,6 +30,12 @@ function Resumen() {
   const entries = active ? orderedEntries(active.entries) : []
   const { total, anomalies, duplicates, flagged } = progress(entries)
   const submitted = active?.submitted
+
+  // Lo que impide cerrar esta ronda, de ESTA bodega. `pendientes` de la tienda
+  // suma todas las bodegas y aquí eso confundiría: lo que bloquea el cierre es
+  // lo que aún no llegó al servidor de la ronda que se va a cerrar.
+  const enCola = entries.filter((e) => e.estadoEnvio === 'pendiente').length
+  const rechazados = entries.filter((e) => e.estadoEnvio === 'rechazado').length
 
   useEffect(() => {
     if (ready && (!activeWarehouseId || !warehouse)) router.replace('/afiliado')
@@ -117,25 +123,43 @@ function Resumen() {
             // probó en producción: 10 kg de arroz y 0 kg de arroz, los dos con
             // `alerta_discrepancia`, los dos en verde.
             const alertaDelServidor = entry.validacion?.startsWith('alerta') === true
-            const sinAcuse = entry.estadoEnvio !== 'enviado'
+            // `rechazado` iba dentro de "sin acuse" y salía con un reloj y el
+            // rótulo "sin confirmar todavía": no se confirma nunca, el
+            // servidor lo rechazó. Se dice cuál de las dos cosas es.
+            const rechazado = entry.estadoEnvio === 'rechazado'
+            const enEspera = entry.estadoEnvio === 'pendiente'
             const isFlagged =
-              alertaDelServidor || sinAcuse || entry.isAnomaly || entry.isDuplicate || entry.needsReview
+              alertaDelServidor ||
+              rechazado ||
+              enEspera ||
+              entry.isAnomaly ||
+              entry.isDuplicate ||
+              entry.needsReview
             return (
               <li
                 key={entry.id}
                 className={cn(
                   'flex items-center gap-3 rounded-xl border-2 bg-card p-3',
-                  isFlagged ? 'border-warning-border' : 'border-border',
+                  rechazado
+                    ? 'border-destructive/50'
+                    : isFlagged
+                      ? 'border-warning-border'
+                      : 'border-border',
                 )}
               >
-                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-muted font-display text-xs font-bold text-muted-foreground">
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-muted font-display text-xs font-bold tabular-nums text-muted-foreground">
                   {i + 1}
                 </span>
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-semibold text-foreground">{entry.name}</p>
-                  <p className="truncate text-xs text-muted-foreground">
+                  <p className="truncate text-xs tabular-nums text-muted-foreground">
                     {formatUnit(entry.quantity, entry.unit)}
                   </p>
+                  {rechazado && (
+                    <p className="text-xs text-destructive">
+                      {entry.error ?? 'El sistema no aceptó este conteo.'}
+                    </p>
+                  )}
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
                   {entry.needsReview && <HelpCircle className="h-4 w-4 text-warning-foreground" aria-label="Revisar" />}
@@ -147,8 +171,14 @@ function Resumen() {
                       aria-label="No cuadra con el sistema"
                     />
                   )}
-                  {sinAcuse && (
-                    <Clock className="h-4 w-4 text-muted-foreground" aria-label="Sin confirmar todavía" />
+                  {enEspera && (
+                    <Clock className="h-4 w-4 text-muted-foreground" aria-label="Sin enviar todavía" />
+                  )}
+                  {rechazado && (
+                    <AlertTriangle
+                      className="h-4 w-4 text-destructive"
+                      aria-label="El sistema no aceptó este conteo"
+                    />
                   )}
                   {!isFlagged && <CheckCircle2 className="h-4 w-4 text-success" aria-label="Sin alertas" />}
                 </div>
@@ -195,16 +225,46 @@ function Resumen() {
             </div>
           )}
 
-          {error && (
-            <p className="mb-3 flex items-start gap-1.5 rounded-lg bg-destructive/10 p-2 text-sm text-destructive">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-              {error}
-            </p>
+          {/* Cerrar con la cola a medio vaciar es la forma más silenciosa de
+              perder trabajo: lo que aún no llegó al servidor vuelve del cuadre
+              como pendiente y el cierre lo graba `no_contado`. Conteos reales
+              convertidos en "nadie lo contó". Por eso no se cierra hasta que la
+              cola esté en cero, y se dice qué falta. */}
+          {enCola > 0 && (
+            <div className="mb-3 flex items-start gap-1.5 rounded-xl border-2 border-warning-border bg-warning/10 p-3">
+              <Clock className="mt-0.5 h-4 w-4 shrink-0 text-warning-foreground" />
+              <span className="text-sm text-warning-foreground">
+                <span className="font-semibold tabular-nums">
+                  {enCola} {enCola === 1 ? 'conteo' : 'conteos'}
+                </span>{' '}
+                todavía no {enCola === 1 ? 'llegó' : 'llegaron'} al sistema. Se envían solos en
+                cuanto haya señal; cerrar ahora {enCola === 1 ? 'lo daría' : 'los daría'} por no
+                contados.
+              </span>
+            </div>
           )}
 
-          {pendientes > 0 && (
-            <p className="mb-2 text-center text-xs text-muted-foreground">
-              {pendientes} {pendientes === 1 ? 'conteo espera' : 'conteos esperan'} a que vuelva la red.
+          {rechazados > 0 && (
+            <div className="mb-3 flex items-start gap-1.5 rounded-xl border-2 border-destructive/40 bg-destructive/10 p-3">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+              <span className="text-sm text-destructive">
+                El sistema no aceptó{' '}
+                <span className="font-semibold tabular-nums">
+                  {rechazados} {rechazados === 1 ? 'conteo' : 'conteos'}
+                </span>
+                . Vuelve a la lista, {rechazados === 1 ? 'corrígelo' : 'corrígelos'} o{' '}
+                {rechazados === 1 ? 'quítalo' : 'quítalos'} antes de cerrar.
+              </span>
+            </div>
+          )}
+
+          {error && (
+            <p
+              role="alert"
+              className="mb-3 flex items-start gap-1.5 rounded-lg bg-destructive/10 p-2 text-sm text-destructive"
+            >
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              {error}
             </p>
           )}
 
@@ -215,7 +275,13 @@ function Resumen() {
               setEnviando(true)
               void submitCount().finally(() => setEnviando(false))
             }}
-            disabled={total === 0 || enviando || alertasSinResponder.length > 0}
+            disabled={
+              total === 0 ||
+              enviando ||
+              alertasSinResponder.length > 0 ||
+              enCola > 0 ||
+              rechazados > 0
+            }
           >
             <Send className="h-[18px] w-[18px]" />
             {enviando ? 'Enviando…' : 'Enviar conteo al auditor'}
@@ -255,7 +321,7 @@ function SummaryStat({
     >
       <p
         className={cn(
-          'font-display text-2xl font-extrabold leading-none',
+          'font-display text-2xl font-extrabold leading-none tabular-nums',
           tone === 'primary' && 'text-primary',
           tone === 'success' && 'text-success',
           tone === 'warning' && 'text-warning-foreground',

@@ -1,6 +1,6 @@
 'use client'
 
-import { CheckCircle2, ChevronRight, History, MapPin, Search, Users, Warehouse as WarehouseIcon } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, ChevronRight, History, Loader2, MapPin, Search, Users, Warehouse as WarehouseIcon } from 'lucide-react'
 import { describir, type Warehouse } from '@/lib/data'
 import { useRouter } from 'next/navigation'
 import { useMemo, useState } from 'react'
@@ -22,9 +22,11 @@ export default function AfiliadoWarehousePage() {
 
 function SelectWarehouse() {
   const router = useRouter()
-  const { session, selectWarehouse, warehouses, warehouses_disponibles, activeWarehouseId } =
+  const { session, selectWarehouse, warehouses, warehouses_disponibles, activeWarehouseId, error } =
     useCountStore()
   const [query, setQuery] = useState('')
+  /** La bodega cuya ronda se está abriendo. Bloquea la lista mientras tanto. */
+  const [abriendo, setAbriendo] = useState<string | null>(null)
 
   // La vista compartida del equipo. Trae quién está contando y cuántas rondas
   // lleva cada bodega — nunca cantidades: eso acabaría con el conteo ciego.
@@ -57,13 +59,24 @@ function SelectWarehouse() {
       setAviso({ id, otros })
       return
     }
-    entrar(id)
+    void entrar(id)
   }
 
-  function entrar(id: string) {
+  /**
+   * Se navega al conteo SOLO si la ronda abrió.
+   *
+   * Antes se empujaba sin esperar: si `abrirRonda` fallaba —red, sesión, una
+   * bodega que ya no está asignada— la pantalla de conteo se quedaba en
+   * "Abriendo la ronda…" para siempre, sin error y sin salida, y el operario
+   * no tenía forma de saber que no estaba contando nada.
+   */
+  async function entrar(id: string) {
     setAviso(null)
-    selectWarehouse(id)
-    router.push('/afiliado/conteo')
+    setAbriendo(id)
+    const abierta = await selectWarehouse(id)
+    setAbriendo(null)
+    // Si no abrió, el motivo ya está en `error` y se pinta arriba de la lista.
+    if (abierta) router.push('/afiliado/conteo')
   }
 
   return (
@@ -92,7 +105,7 @@ function SelectWarehouse() {
             <div className="mt-4 flex flex-col gap-2">
               <button
                 type="button"
-                onClick={() => entrar(aviso.id)}
+                onClick={() => void entrar(aviso.id)}
                 className="h-12 rounded-xl bg-primary font-display text-sm font-bold text-primary-foreground"
               >
                 Entrar de todos modos
@@ -133,6 +146,19 @@ function SelectWarehouse() {
           />
         </div>
 
+        {/* Lo que falló, con palabras. La tienda lo guardaba en `error` y
+            ninguna pantalla lo pintaba: una ronda que no abre, un catálogo que
+            no baja o el disco lleno se veían como que no pasaba nada. */}
+        {error && (
+          <p
+            role="alert"
+            className="mb-3 flex items-start gap-1.5 rounded-lg bg-destructive/10 p-2.5 text-sm text-destructive"
+          >
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            {error}
+          </p>
+        )}
+
         {/* Lista de bodegas */}
         <ul className="space-y-2" aria-label="Bodegas disponibles">
           {results.map((w) => {
@@ -149,7 +175,8 @@ function SelectWarehouse() {
                 <button
                   type="button"
                   onClick={() => choose(w.id)}
-                  className="flex w-full items-center gap-3 rounded-xl border-2 border-border bg-card p-3 text-left transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  disabled={abriendo !== null}
+                  className="flex w-full items-center gap-3 rounded-xl border-2 border-border bg-card p-3 text-left transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
                 >
                   <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-primary-soft text-primary">
                     <WarehouseIcon className="h-5 w-5" />
@@ -181,12 +208,17 @@ function SelectWarehouse() {
                       )}
                     </p>
                   </div>
-                  {submitted ? (
+                  {abriendo === w.id ? (
+                    <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-semibold text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                      Abriendo…
+                    </span>
+                  ) : submitted ? (
                     <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-success-soft px-2 py-1 text-[11px] font-semibold text-success">
                       <CheckCircle2 className="h-3 w-3" /> Enviada
                     </span>
                   ) : inProgress ? (
-                    <span className="shrink-0 rounded-full bg-warning-soft px-2 py-1 text-[11px] font-semibold text-warning-foreground">
+                    <span className="shrink-0 rounded-full bg-warning-soft px-2 py-1 text-[11px] font-semibold tabular-nums text-warning-foreground">
                       {wh!.entries.length} en curso
                     </span>
                   ) : (

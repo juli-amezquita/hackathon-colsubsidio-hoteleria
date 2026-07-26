@@ -113,6 +113,15 @@ interface Session {
 
 interface CountState {
   session: Session | null
+  /**
+   * De quién es la cola. Pertenece a quien contó, no al aparato.
+   *
+   * En una bodega el teléfono se comparte: el operario A termina su turno sin
+   * cobertura y entra B en el mismo navegador. Sin esta marca, lo que quedó
+   * pendiente de A se enviaría con la cookie de B —rechazado y perdido— y a B
+   * la pantalla le diría que hay conteos suyos esperando red.
+   */
+  owner: string | null
   warehouses_disponibles: Warehouse[]
   activeWarehouseId: string | null
   warehouses: Record<string, WarehouseCount>
@@ -130,7 +139,8 @@ interface CountContextValue extends CountState {
   getWarehouse: (id: string | null | undefined) => Warehouse | null
   login: (username: string, password: string) => Promise<Session | null>
   logout: () => Promise<void>
-  selectWarehouse: (id: string) => Promise<void>
+  /** `false` si la ronda no abrió. El motivo queda en `error`. */
+  selectWarehouse: (id: string) => Promise<boolean>
   /** Resuelve un nombre dictado contra el catálogo cacheado. Sin red. */
   resolver: (texto: string) => { articulo: ArticuloDeTrabajo | null; candidatos: ArticuloDeTrabajo[] }
   addEntry: (entry: Omit<CountEntry, 'id' | 'clave' | 'order' | 'capturedAt' | 'estadoEnvio' | 'validacion'>) => void
@@ -138,8 +148,17 @@ interface CountContextValue extends CountState {
   idDeUnidad: (u: Unit) => string | null
   updateEntry: (id: string, patch: Partial<Omit<CountEntry, 'id' | 'order'>>) => void
   removeEntry: (id: string) => void
-  /** Hallazgo físico sin correspondencia en el catálogo (Historia 5, FR-5.x). */
-  reportarHallazgo: (h: { nombre: string; cantidad: number; unidad: string | null }) => Promise<void>
+  /**
+   * Hallazgo físico sin correspondencia en el catálogo (Historia 5, FR-5.x).
+   *
+   * Devuelve si el servidor lo aceptó: quien lo reporta necesita saberlo para
+   * no decirle "anotado" al operario sobre algo que no se anotó.
+   */
+  reportarHallazgo: (h: {
+    nombre: string
+    cantidad: number
+    unidad: string | null
+  }) => Promise<boolean>
   /**
    * Alertas que el servidor devolvió y el operario todavía no respondió.
    *
@@ -161,6 +180,7 @@ const CountContext = createContext<CountContextValue | null>(null)
 
 const initialState: CountState = {
   session: null,
+  owner: null,
   warehouses_disponibles: [],
   activeWarehouseId: null,
   warehouses: {},
@@ -181,7 +201,19 @@ export function CountProvider({ children }: { children: ReactNode }) {
   const [catalogo, setCatalogo] = useState<ArticuloDeTrabajo[]>([])
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const drenando = useRef(false)
+  /** El drenado en curso (o el último encolado). Se puede esperar. */
+  const cola = useRef<Promise<void> | null>(null)
+  /** Ya hay una pasada haciendo fila detrás de la que corre. */
+  const esperando = useRef(false)
+  /**
+   * El estado más reciente para lo que no se re-renderiza.
+   *
+   * El drenado corre en un intervalo y desde `submitCount`; si trabajara sobre
+   * la foto que tenía al montarse, reenviaría lo que la pasada anterior ya
+   * confirmó y no vería lo que se acaba de capturar.
+   */
+  const estadoRef = useRef(state)
+  estadoRef.current = state
 
   // ── Persistencia local: lo primero que se escribe ────────────────────────
 
@@ -197,14 +229,36 @@ export function CountProvider({ children }: { children: ReactNode }) {
     api
       .sesionActual()
       .then((s) =>
-        setState((prev) => ({
-          ...prev,
-          session: { username: s.usuarioId, role: rolDesdeServidor(s.rol), name: s.nombre },
-          warehouses_disponibles: s.bodegas.map((b) => ({ id: b.id, name: b.nombre })),
-        })),
+        setState((prev) => {
+          const sesion: Session = {
+            username: s.usuarioId,
+            role: rolDesdeServidor(s.rol),
+            name: s.nombre,
+          }
+          const ajena = prev.owner !== null && prev.owner !== sesion.username
+          return {
+            ...prev,
+            session: sesion,
+            owner: sesion.username,
+            // La cola del disco es de otro operario: no se hereda.
+            warehouses: ajena ? {} : prev.warehouses,
+            activeWarehouseId: ajena ? null : prev.activeWarehouseId,
+            warehouses_disponibles: s.bodegas.map((b) => ({ id: b.id, name: b.nombre })),
+          }
+        }),
       )
-      .catch(() => {
-        /* sin sesión: la pantalla de acceso se encarga */
+      .catch((e: unknown) => {
+        // Solo el SERVIDOR invalida una sesión. Si esto falló por red —lo
+        // normal al reabrir la app en una bodega sin señal— la sesión del
+        // disco se conserva y el operario sigue contando.
+        //
+        // Pero si el servidor dijo 401/403, la sesión no puede quedarse
+        // pintada como válida: el operario seguía viendo su nombre, contaba
+        // treinta artículos y cada envío volvía 401. La cola SÍ se conserva:
+        // esos conteos son suyos y se envían cuando vuelva a entrar.
+        if (e instanceof api.ErrorApi && (e.estado === 401 || e.estado === 403)) {
+          setState((prev) => ({ ...prev, session: null, warehouses_disponibles: [] }))
+        }
       })
       .finally(() => setReady(true))
   }, [])
@@ -261,7 +315,7 @@ export function CountProvider({ children }: { children: ReactNode }) {
       setState((s) => {
         const wh = s.warehouses[bodegaId]
         if (!wh) return s
-        return {
+        const siguiente = {
           ...s,
           warehouses: {
             ...s.warehouses,
@@ -271,73 +325,155 @@ export function CountProvider({ children }: { children: ReactNode }) {
             },
           },
         }
+        // El ref se adelanta al render. `submitCount` consulta la cola en el
+        // microtask siguiente al drenado y React todavía no ha re-renderizado:
+        // sin esto vería como pendiente lo que el servidor acaba de acusar y
+        // se negaría a cerrar una ronda que sí está completa.
+        estadoRef.current = siguiente
+        return siguiente
       })
     },
     [],
   )
 
   /**
+   * El servidor no reconoce la sesión.
+   *
+   * Se cae la sesión, **no la cola**: lo contado es del operario y sigue
+   * valiendo. Al volver a entrar con el mismo documento se envía solo.
+   */
+  const sesionCaducada = useCallback(() => {
+    // No hay sesión que caducar —por ejemplo, el último envío que hace `logout`
+    // con la cookie ya invalidada—: no se avisa de algo que no le pasó a nadie.
+    const actual = estadoRef.current
+    if (!actual.session) return
+    estadoRef.current = { ...actual, session: null }
+    setState((s) => ({ ...s, session: null }))
+    setError('Tu sesión venció. Vuelve a entrar: lo que contaste sigue guardado en el teléfono.')
+  }, [])
+
+  /**
+   * Una pasada por la cola de un estado concreto.
+   *
+   * Recibe el estado en vez de leerlo porque `logout` necesita vaciar la cola
+   * del operario que se va con la cookie que todavía es suya, y para entonces
+   * ese estado ya no está montado.
+   *
+   * No lanza nunca: si algo revienta, lo pendiente sigue pendiente.
+   */
+  const enviarCola = useCallback(
+    async (estado: CountState) => {
+      // Sin sesión no se envía nada. Cada `registrar` volvería 401 —y peor, con
+      // la cookie de quien esté usando el aparato ahora, que puede no ser quien
+      // contó.
+      if (!estado.session) return
+
+      try {
+        for (const [bodegaId, wh] of Object.entries(estado.warehouses)) {
+          if (!wh.rondaId) continue
+
+          for (const e of wh.entries.filter((x) => x.estadoEnvio === 'pendiente')) {
+            try {
+              const acuse = await api.registrar(wh.rondaId, {
+                articuloId: e.articuloId,
+                cantidad: e.quantity,
+                unidadId: e.unidadId,
+                // Un conteo SOSTENIDO viaja como texto aunque se hubiera dictado.
+                //
+                // No es un detalle de formato: `pendiente_de_resolver` exige
+                // evidencia de audio para todo lo sostenido en modo voz, y este
+                // producto no graba audio en ningún punto (`pendingAudioRef` solo
+                // se pone a `null`, no existe un `MediaRecorder`). El resultado
+                // era una ronda que NO SE PODÍA CERRAR JAMÁS: el operario
+                // sostenía su conteo, el servidor pedía un audio que nadie podía
+                // subir, y el cierre quedaba bloqueado para siempre.
+                //
+                // Sostener es pulsar un botón en la pantalla, no dictar. Que
+                // viaje como texto describe lo que de verdad ocurrió y conserva
+                // la respuesta a la alerta, que es lo que FR-2.4 exige. El
+                // dictado original ya está en el libro, inmutable, en el registro
+                // anterior.
+                textoDictado: e.alertaRespondida === true ? null : e.transcript || null,
+                confirmaCorreccion: e.isDuplicate,
+                // `alertaRespondida` es lo que el operario contestó cuando el
+                // servidor marcó discrepancia. Sin esto el registro se reenvía
+                // igual y la alerta vuelve a quedar sin responder — que es lo que
+                // bloqueaba el cierre.
+                confirmaPeseAAlerta: e.isAnomaly || e.alertaRespondida === true,
+                claveIdempotencia: e.clave,
+              })
+              marcar(bodegaId, e.id, {
+                estadoEnvio: 'enviado',
+                validacion: acuse.validacion.resultado,
+                registroId: acuse.registroId,
+              })
+            } catch (err) {
+              // 401/403 NO es un rechazo del conteo: es "vuelve a entrar".
+              // Marcarlo `rechazado` —que es definitivo— borraba la ronda
+              // entera de un operario cuya sesión había caducado, sin un
+              // mensaje. Queda pendiente y lo que se cae es la sesión.
+              if (err instanceof api.ErrorApi && (err.estado === 401 || err.estado === 403)) {
+                sesionCaducada()
+                return
+              }
+              // 400/409/422 sí son definitivos: el servidor no va a aceptar
+              // este registro por mucho que se reintente. Se marca y se sigue
+              // con el resto —parar aquí atascaba la cola detrás de un solo
+              // registro malo, y con la cola sin vaciar no se puede cerrar.
+              if (err instanceof api.ErrorApi && err.estado >= 400 && err.estado < 500) {
+                marcar(bodegaId, e.id, { estadoEnvio: 'rechazado', error: err.message })
+                continue
+              }
+              // Fallo de red: la entrada queda pendiente y vuelve a intentarse.
+              return
+            }
+          }
+        }
+      } catch {
+        // Nada puede romper la cadena de drenados: el siguiente intento recoge
+        // lo que quedó.
+      }
+    },
+    [marcar, sesionCaducada],
+  )
+
+  /**
    * Envía lo pendiente. Reintentar es seguro: el servidor deduplica por la
    * clave que este dispositivo generó, así que un envío repetido devuelve
    * exactamente la misma respuesta que el original.
+   *
+   * **Se puede esperar de verdad.** Antes, con un drenado ya en curso, esto
+   * devolvía una promesa ya resuelta: `submitCount` hacía `await drenar()`
+   * creyendo que había vaciado la cola, el cuadre del servidor no veía los
+   * registros que seguían en vuelo, y el cierre los grababa `no_contado`.
+   * Veinte conteos reales convertidos en "nadie lo contó", en silencio.
    */
-  const drenar = useCallback(async () => {
-    if (drenando.current) return
-    drenando.current = true
-
-    try {
-      for (const [bodegaId, wh] of Object.entries(state.warehouses)) {
-        if (!wh.rondaId) continue
-
-        for (const e of wh.entries.filter((x) => x.estadoEnvio === 'pendiente')) {
-          try {
-            const acuse = await api.registrar(wh.rondaId, {
-              articuloId: e.articuloId,
-              cantidad: e.quantity,
-              unidadId: e.unidadId,
-              // Un conteo SOSTENIDO viaja como texto aunque se hubiera dictado.
-              //
-              // No es un detalle de formato: `pendiente_de_resolver` exige
-              // evidencia de audio para todo lo sostenido en modo voz, y este
-              // producto no graba audio en ningún punto (`pendingAudioRef` solo
-              // se pone a `null`, no existe un `MediaRecorder`). El resultado
-              // era una ronda que NO SE PODÍA CERRAR JAMÁS: el operario
-              // sostenía su conteo, el servidor pedía un audio que nadie podía
-              // subir, y el cierre quedaba bloqueado para siempre.
-              //
-              // Sostener es pulsar un botón en la pantalla, no dictar. Que
-              // viaje como texto describe lo que de verdad ocurrió y conserva
-              // la respuesta a la alerta, que es lo que FR-2.4 exige. El
-              // dictado original ya está en el libro, inmutable, en el registro
-              // anterior.
-              textoDictado: e.alertaRespondida === true ? null : e.transcript || null,
-              confirmaCorreccion: e.isDuplicate,
-              // `alertaRespondida` es lo que el operario contestó cuando el
-              // servidor marcó discrepancia. Sin esto el registro se reenvía
-              // igual y la alerta vuelve a quedar sin responder — que es lo que
-              // bloqueaba el cierre.
-              confirmaPeseAAlerta: e.isAnomaly || e.alertaRespondida === true,
-              claveIdempotencia: e.clave,
-            })
-            marcar(bodegaId, e.id, {
-              estadoEnvio: 'enviado',
-              validacion: acuse.validacion.resultado,
-              registroId: acuse.registroId,
-            })
-          } catch (err) {
-            // Un fallo de red deja la entrada pendiente: vuelve a intentarse.
-            // Un rechazo del servidor sí es definitivo y se marca.
-            if (err instanceof api.ErrorApi && err.estado >= 400 && err.estado < 500) {
-              marcar(bodegaId, e.id, { estadoEnvio: 'rechazado', error: err.message })
-            }
-            return
-          }
-        }
-      }
-    } finally {
-      drenando.current = false
+  const drenar = useCallback((): Promise<void> => {
+    const enCurso = cola.current
+    if (!enCurso) {
+      const p: Promise<void> = enviarCola(estadoRef.current).finally(() => {
+        if (cola.current === p) cola.current = null
+      })
+      cola.current = p
+      return p
     }
-  }, [state.warehouses, marcar])
+    // Ya hay uno corriendo, y pudo empezar antes de lo que se acaba de
+    // encolar: se garantiza una pasada más detrás. Solo una — apilar una por
+    // cada tick de 5 s haría crecer la cadena sin fin con la red lenta.
+    if (esperando.current) return enCurso
+    esperando.current = true
+    const reanudar = () => {
+      esperando.current = false
+    }
+    const p: Promise<void> = enCurso
+      .then(reanudar, reanudar)
+      .then(() => enviarCola(estadoRef.current))
+      .finally(() => {
+        if (cola.current === p) cola.current = null
+      })
+    cola.current = p
+    return p
+  }, [enviarCola])
 
   useEffect(() => {
     if (!ready) return
@@ -362,11 +498,20 @@ export function CountProvider({ children }: { children: ReactNode }) {
         role: rolDesdeServidor(s.rol),
         name: s.nombre,
       }
-      setState((prev) => ({
-        ...prev,
-        session: sesion,
-        warehouses_disponibles: s.bodegas.map((b) => ({ id: b.id, name: b.nombre })),
-      }))
+      setState((prev) => {
+        // La cola es de quien contó. Si el aparato traía pendientes de OTRO
+        // operario, se descartan aquí: enviarlos con esta cookie sería
+        // atribuirle a este usuario conteos que no hizo.
+        const ajena = prev.owner !== null && prev.owner !== sesion.username
+        return {
+          ...prev,
+          session: sesion,
+          owner: sesion.username,
+          warehouses: ajena ? {} : prev.warehouses,
+          activeWarehouseId: ajena ? null : prev.activeWarehouseId,
+          warehouses_disponibles: s.bodegas.map((b) => ({ id: b.id, name: b.nombre })),
+        }
+      })
       return sesion
     } catch {
       // Mismo mensaje para "no existe" y "clave mala": distinguirlos permitiría
@@ -375,16 +520,50 @@ export function CountProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  /**
+   * Cierra la sesión y **se lleva la cola**.
+   *
+   * En un teléfono de bodega el turno siguiente entra en el mismo navegador:
+   * dejar los pendientes ahí hacía que el intervalo de 5 s los enviara con la
+   * cookie del nuevo operario —403, perdidos— mientras a él la pantalla le
+   * decía que hay conteos suyos esperando red.
+   *
+   * Antes de soltarlos se hace un último intento con la cookie de quien se va,
+   * que sigue viva un instante más. La sesión se limpia primero para que la
+   * pantalla responda al toque y no rebote contra el acceso.
+   */
   const logout = useCallback(async () => {
-    await api.salir().catch(() => undefined)
-    setState((s) => ({ ...s, session: null, activeWarehouseId: null }))
+    const antes = estadoRef.current
+    const limpio: CountState = {
+      ...antes,
+      session: null,
+      owner: null,
+      activeWarehouseId: null,
+      warehouses: {},
+    }
+    // El ref también, y no solo el estado: si no, el drenado del intervalo
+    // seguiría viendo la cola del operario que se acaba de ir.
+    estadoRef.current = limpio
+    setState(limpio)
     setCatalogo([])
-  }, [])
+    setError(null)
+    // `antes` a propósito: es la cola de quien se va, con su cookie, que
+    // todavía vale hasta la línea siguiente.
+    await enviarCola(antes)
+    await api.salir().catch(() => undefined)
+  }, [enviarCola])
 
   // ── Bodega y catálogo ────────────────────────────────────────────────────
 
+  /**
+   * Abre la ronda de una bodega. Devuelve si lo consiguió.
+   *
+   * Lo devuelve porque quien navega necesita saberlo: la pantalla de bodegas
+   * empujaba al conteo sin esperar y, si la ronda no abría, quedaba en
+   * "Abriendo la ronda…" para siempre, sin error y sin salida.
+   */
   const selectWarehouse = useCallback(
-    async (id: string) => {
+    async (id: string): Promise<boolean> => {
       setError(null)
       setState((s) => ({
         ...s,
@@ -403,8 +582,10 @@ export function CountProvider({ children }: { children: ReactNode }) {
             [id]: { ...(s.warehouses[id] ?? vacia()), rondaId: ronda.rondaId },
           },
         }))
+        return true
       } catch (e) {
         setError(e instanceof Error ? e.message : 'No se pudo abrir la ronda.')
+        return false
       }
     },
     [],
@@ -557,6 +738,29 @@ export function CountProvider({ children }: { children: ReactNode }) {
     setError(null)
     await drenar()
 
+    // Lo que no ha llegado al servidor no existe para el cuadre: vuelve como
+    // pendiente y el cierre lo graba `no_contado`. Cerrar con la cola a medio
+    // vaciar convierte conteos reales en "nadie lo contó", así que no se
+    // cierra hasta que no quede nada por enviar.
+    const alCerrar = estadoRef.current.warehouses[id]?.entries ?? []
+    const enCola = alCerrar.filter((e) => e.estadoEnvio === 'pendiente').length
+    if (enCola > 0) {
+      setError(
+        `Faltan ${enCola} ${enCola === 1 ? 'conteo' : 'conteos'} por enviar. ` +
+          'Busca señal y espera a que la cola quede en cero: cerrar ahora los daría por no contados.',
+      )
+      return
+    }
+
+    const rechazados = alCerrar.filter((e) => e.estadoEnvio === 'rechazado').length
+    if (rechazados > 0) {
+      setError(
+        `El sistema no aceptó ${rechazados} ${rechazados === 1 ? 'conteo' : 'conteos'}. ` +
+          'Corrígelos o quítalos de la lista antes de cerrar: si no, quedarían como no contados.',
+      )
+      return
+    }
+
     try {
       const cuadre = await api.cuadreDeCierre(wh.rondaId)
 
@@ -610,7 +814,10 @@ export function CountProvider({ children }: { children: ReactNode }) {
     async (h) => {
       const id = state.activeWarehouseId
       const wh = id ? state.warehouses[id] : null
-      if (!wh?.rondaId) return
+      if (!wh?.rondaId) {
+        setError('La ronda no está abierta: el hallazgo no se pudo anotar.')
+        return false
+      }
       try {
         await api.reportarFantasma(wh.rondaId, {
           descripcion: h.nombre,
@@ -618,8 +825,10 @@ export function CountProvider({ children }: { children: ReactNode }) {
           cantidad: h.cantidad,
           confirmaNoEsDelCatalogo: true,
         })
+        return true
       } catch (e) {
         setError(e instanceof Error ? e.message : 'No se pudo anotar el hallazgo.')
+        return false
       }
     },
     [state.activeWarehouseId, state.warehouses],
@@ -677,6 +886,15 @@ export function CountProvider({ children }: { children: ReactNode }) {
       ),
     [state.warehouses],
   )
+
+  // Un conteo recién capturado se intenta enviar en el acto, sin esperar al
+  // tick. Antes esto salía gratis porque `drenar` cambiaba con cada cambio de
+  // estado y el efecto del intervalo se rehacía — lo que además reiniciaba el
+  // temporizador en cada pulsación. Ahora el intervalo es fijo y el empujón es
+  // explícito.
+  useEffect(() => {
+    if (ready && pendientes > 0) void drenar()
+  }, [ready, pendientes, drenar])
 
   const value = useMemo<CountContextValue>(
     () => ({
