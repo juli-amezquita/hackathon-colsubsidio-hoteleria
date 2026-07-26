@@ -476,7 +476,7 @@ components:
   schemas:
     Rol:
       type: string
-      enum: [operador, auditor, administrador]
+      enum: [operador, auditor, administrador, supervisor]
 
     ModoCaptura:
       type: string

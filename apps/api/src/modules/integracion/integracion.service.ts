@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 
 import { conexion } from '../../platform/db/cliente';
+import type { ProveedorDeSalidas, SalidaRegistrada } from '../../platform/dominio/estado';
 import { PUERTO_ERP, type LineaInventario, type PuertoInventarioERP } from '../../proveedores/erp/puerto';
 
 /**
@@ -31,7 +32,7 @@ export interface FilaConsolidada {
 }
 
 @Injectable()
-export class IntegracionService {
+export class IntegracionService implements ProveedorDeSalidas {
   constructor(@Inject(PUERTO_ERP) private readonly erp: PuertoInventarioERP) {}
 
   /**
@@ -257,6 +258,15 @@ export class IntegracionService {
         (id, bodega_id, destino, estado, referencia, ejecutado_por, articulos_enviados, articulos_aceptados)
       VALUES (${randomUUID()}, ${bodegaId}, ${formato}, 'aceptado',
               ${`${formato}:${bodegaId}:${randomUUID()}`}, ${usuarioId}, ${filas}, ${filas})`;
+  }
+
+  /** Interfaz publicada para el modo consulta. */
+  async salidasDeBodega(bodegaId: string): Promise<readonly SalidaRegistrada[]> {
+    const items = await this.constancias(bodegaId);
+    return items.map((i) => ({
+      destino: i.destino, estado: i.estado, usuario: i.usuario,
+      ejecutadoEn: i.ejecutadoEn, enviadas: i.enviadas,
+    }));
   }
 
   /** La traza de salidas de una bodega. Es lo que se audita después (SC-7.3). */

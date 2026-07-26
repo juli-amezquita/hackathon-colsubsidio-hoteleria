@@ -29,7 +29,7 @@ export const EstadoRegistroSchema = z.enum(['contado', 'contado_en_cero', 'no_co
 export type EstadoRegistro = z.infer<typeof EstadoRegistroSchema>;
 
 /** Roles. Se deducen de la base de datos; el usuario nunca los elige (FR-1.2). */
-export const RolSchema = z.enum(['operador', 'auditor', 'administrador']);
+export const RolSchema = z.enum(['operador', 'auditor', 'administrador', 'supervisor']);
 export type Rol = z.infer<typeof RolSchema>;
 
 /** Error uniforme de la API. Nunca transporta el saldo esperado (FR-1.18). */

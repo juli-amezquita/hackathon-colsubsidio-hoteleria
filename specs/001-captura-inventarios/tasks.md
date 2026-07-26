@@ -236,11 +236,11 @@ Cada slice atraviesa datos → dominio → API → UI → pruebas, y termina en 
 
 ### Slice 9 — Modo consulta del supervisor (extra)
 
-| # | Tarea |
-|---|---|
-| H9-01 | Grok Voice Agent, **solo lectura**, restringido a Supervisor/Administrador |
-| H9-02 | Límite de minutos por mes y alerta de consumo |
-| H9-03 | Verificar endpoint y tarifa reales antes de habilitarlo |
+| # | Tarea | Estado |
+|---|---|---|
+| H9-01 | Grok Voice Agent, **solo lectura**, restringido a Supervisor/Administrador | ✅ catálogo CERRADO de intenciones + rol `supervisor`; Operador y Auditor → 403 |
+| H9-02 | Límite de minutos por mes y alerta de consumo | ✅ tope de 400 min/mes por supervisor, reservado ANTES de la sesión, con aviso al 80% |
+| H9-03 | Verificar endpoint y tarifa reales antes de habilitarlo | ✅ ⚠️ **sin verificar**: `verificado = false` impide encender Grok aunque se configure |
 
 ---
 

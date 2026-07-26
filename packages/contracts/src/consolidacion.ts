@@ -67,3 +67,16 @@ export const ReconteoEntradaSchema = z.object({
   claveIdempotencia: IdSchema,
 });
 export type ReconteoEntrada = z.infer<typeof ReconteoEntradaSchema>;
+
+/**
+ * Una pregunta del supervisor, en lenguaje natural (D-10).
+ *
+ * El límite de longitud no es cosmético: un texto largo en un campo que llega a
+ * un modelo es el vector clásico de inyección de instrucciones. La superficie
+ * real la cierra el catálogo cerrado de intenciones, pero acotar la entrada
+ * cuesta una línea.
+ */
+export const PreguntaSchema = z.object({
+  pregunta: z.string().trim().min(2).max(300),
+});
+export type Pregunta = z.infer<typeof PreguntaSchema>;

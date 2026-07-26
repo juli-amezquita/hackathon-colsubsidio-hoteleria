@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 
 import { config } from '../../config';
+import { PROVEEDOR_SALIDAS } from '../../platform/dominio/estado';
 import { ErpOracle } from '../../proveedores/erp/oracle';
 import { PUERTO_ERP } from '../../proveedores/erp/puerto';
 import { ErpSimulado } from '../../proveedores/erp/simulado';
@@ -20,7 +21,8 @@ import { IntegracionService } from './integracion.service';
   providers: [
     IntegracionService,
     { provide: PUERTO_ERP, useClass: config().PROVEEDOR_ERP === 'oracle' ? ErpOracle : ErpSimulado },
+    { provide: PROVEEDOR_SALIDAS, useExisting: IntegracionService },
   ],
-  exports: [IntegracionService],
+  exports: [IntegracionService, PROVEEDOR_SALIDAS],
 })
 export class IntegracionModule {}

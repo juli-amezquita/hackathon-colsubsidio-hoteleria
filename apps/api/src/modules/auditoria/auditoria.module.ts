@@ -6,6 +6,7 @@ import { ArbitroDeterminista } from '../../proveedores/arbitraje/determinista';
 import { PROVEEDOR_ARBITRAJE } from '../../proveedores/arbitraje/proveedor';
 import { AuditoriaController } from './auditoria.controller';
 import { AuditoriaService } from './auditoria.service';
+import { PROVEEDOR_PENDIENTES } from '../../platform/dominio/estado';
 import { SENALES_AUDITORIA } from '../../platform/dominio/senales';
 import { SenalesAuditoriaService } from './senales.service';
 
@@ -26,12 +27,13 @@ import { SenalesAuditoriaService } from './senales.service';
     AuditoriaService,
     SenalesAuditoriaService,
     { provide: SENALES_AUDITORIA, useExisting: SenalesAuditoriaService },
+    { provide: PROVEEDOR_PENDIENTES, useExisting: AuditoriaService },
     ArbitroDeterminista,
     {
       provide: PROVEEDOR_ARBITRAJE,
       useClass: config().PROVEEDOR_ARBITRAJE === 'anthropic' ? ArbitroAnthropic : ArbitroDeterminista,
     },
   ],
-  exports: [AuditoriaService, SENALES_AUDITORIA],
+  exports: [AuditoriaService, SENALES_AUDITORIA, PROVEEDOR_PENDIENTES],
 })
 export class AuditoriaModule {}

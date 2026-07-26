@@ -5,6 +5,7 @@ import { AprendizajeModule } from './modules/aprendizaje/aprendizaje.module';
 import { AuditoriaModule } from './modules/auditoria/auditoria.module';
 import { CapturaModule } from './modules/captura/captura.module';
 import { CatalogoModule } from './modules/catalogo/catalogo.module';
+import { ConsultaModule } from './modules/consulta/consulta.module';
 import { ConsolidacionModule } from './modules/consolidacion/consolidacion.module';
 import { IdentidadModule } from './modules/identidad/identidad.module';
 import { IntegracionModule } from './modules/integracion/integracion.module';
@@ -27,6 +28,7 @@ import { ProveedoresModule } from './proveedores/proveedores.module';
     AuditoriaModule,
     IntegracionModule,
     AprendizajeModule,
+    ConsultaModule,
     // Arranca el despachador del outbox: sin él los eventos se escriben y
     // nadie los consume (Principio IV).
     DespachoModule,

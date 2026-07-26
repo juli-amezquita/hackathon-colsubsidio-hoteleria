@@ -4,6 +4,7 @@ import { BadRequestException, Inject, Injectable, NotFoundException } from '@nes
 import type postgres from 'postgres';
 
 import { conexion } from '../../platform/db/cliente';
+import type { PendienteDeAuditoria, ProveedorDePendientes } from '../../platform/dominio/estado';
 import { ESCALA_CANTIDAD, aEntero } from '../../platform/numeros/decimal';
 import {
   PROVEEDOR_ARBITRAJE,
@@ -31,7 +32,7 @@ export interface ReconteoEntrada {
 }
 
 @Injectable()
-export class AuditoriaService {
+export class AuditoriaService implements ProveedorDePendientes {
   constructor(@Inject(PROVEEDOR_ARBITRAJE) private readonly arbitro: ProveedorDeArbitraje) {}
 
   /**
@@ -223,6 +224,12 @@ export class AuditoriaService {
    * artículo sigue siendo `auditable` para siempre —esa es la conclusión de
    * los conteos y no cambia—, lo que cambia es si alguien ya lo atendió.
    */
+  /** Interfaz publicada para el modo consulta: solo nombre y motivo. */
+  async pendientesDeBodega(bodegaId: string): Promise<readonly PendienteDeAuditoria[]> {
+    const items = await this.pendientes(bodegaId);
+    return items.map((i) => ({ nombre: i.nombre, motivo: i.motivo }));
+  }
+
   async pendientes(bodegaId: string) {
     // Artículos y hallazgos sin catálogo salen en la MISMA bandeja: para el
     // Auditor son la misma clase de trabajo —ir al estante y explicar— y

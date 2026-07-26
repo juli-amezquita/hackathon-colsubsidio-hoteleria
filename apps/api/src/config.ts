@@ -33,6 +33,9 @@ const EsquemaEntorno = z.object({
   BASE_URL_LLM: z.string().optional(),
 
   PROVEEDOR_ERP: z.enum(['simulado', 'oracle']).default('simulado'),
+  /** Agente conversacional del supervisor (D-10). Ver H9-03 antes de encenderlo. */
+  PROVEEDOR_AGENTE_VOZ: z.enum(['simulado', 'grok']).default('simulado'),
+  XAI_API_KEY: z.string().optional(),
   /** Oracle Fusion Cloud Inventory Management (SPEC §6). Sin verificar. */
   ERP_BASE_URL: z.string().url().optional(),
   ERP_USUARIO: z.string().optional(),

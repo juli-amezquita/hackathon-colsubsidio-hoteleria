@@ -154,6 +154,7 @@ async function main(): Promise<void> {
         ['1000000001', 'Operador de Prueba', 'operador'],
         ['1000000002', 'Auditor de Prueba', 'auditor'],
         ['1000000003', 'Administrador de Prueba', 'administrador'],
+        ['1000000004', 'Supervisor de Prueba', 'supervisor'],
       ] as const;
 
       for (const [doc, nombre, rol] of usuarios) {

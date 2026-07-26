@@ -3,6 +3,7 @@ import type { Evento, TipoEvento } from '@cci/contracts';
 import type postgres from 'postgres';
 
 import { conexion } from '../../platform/db/cliente';
+import type { EstadoDeBodega, ProveedorDeEstado } from '../../platform/dominio/estado';
 import type { Consumidor } from '../../platform/eventos/bus';
 import { clasificar, type AfirmacionDeRonda, type Consolidado } from './clasificacion';
 
@@ -27,7 +28,7 @@ import { clasificar, type AfirmacionDeRonda, type Consolidado } from './clasific
  *     archivo paralelo que alguien dejó de mantener.
  */
 @Injectable()
-export class ConsolidacionService implements Consumidor {
+export class ConsolidacionService implements Consumidor, ProveedorDeEstado {
   readonly nombre = 'consolidacion';
   readonly interesadoEn: readonly TipoEvento[] = ['RondaCerrada'];
 
@@ -202,6 +203,11 @@ export class ConsolidacionService implements Consumidor {
       rondasAfirmando: f.rondas_afirmando,
       resuelto: f.resuelto,
     }));
+  }
+
+  /** Interfaz publicada para el modo consulta: el mismo resumen. */
+  estadoDeBodega(bodegaId: string): Promise<EstadoDeBodega> {
+    return this.resumen(bodegaId);
   }
 
   /** Resumen de la bodega. Es lo que hace demostrable el slice. */

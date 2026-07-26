@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 
+import { PROVEEDOR_ESTADO } from '../../platform/dominio/estado';
 import { ConsolidacionController } from './consolidacion.controller';
 import { ConsolidacionService } from './consolidacion.service';
 
@@ -16,7 +17,10 @@ import { ConsolidacionService } from './consolidacion.service';
  */
 @Module({
   controllers: [ConsolidacionController],
-  providers: [ConsolidacionService],
-  exports: [ConsolidacionService],
+  providers: [
+    ConsolidacionService,
+    { provide: PROVEEDOR_ESTADO, useExisting: ConsolidacionService },
+  ],
+  exports: [ConsolidacionService, PROVEEDOR_ESTADO],
 })
 export class ConsolidacionModule {}
