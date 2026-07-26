@@ -20,18 +20,19 @@ La distinción importa: `research.md` cuenta **por qué se decidió** algo en su
 |---|---|
 | `SPEC.md` (raíz) | **HISTÓRICO** — es el encargo del cliente, no se toca |
 | `.specify/memory/constitution.md` | **AL DÍA** con dos desviaciones registradas abajo |
-| `spec.md` | *(ver sección)* |
-| `checklists/requirements.md` | *(ver sección)* |
-| `contracts/events.md` | *(ver sección)* |
-| `plan.md` | *(ver sección)* |
-| `research.md` | **HISTÓRICO** con salvedades |
+| `spec.md` | **DESFASADO** en seis puntos concretos; vigente en el grueso |
+| `checklists/requirements.md` | **HISTÓRICO** — no se toca; tres afirmaciones ya no son ciertas |
+| `contracts/events.md` | **DESFASADO** — documenta 8 eventos, el código emite 3 |
+| `plan.md` | **DESFASADO — el peor.** 8 de 15 filas del contexto técnico son falsas |
+| `research.md` | **HISTÓRICO** — 9 decisiones reemplazadas de facto, sin nota |
 | `data-model.md` | **DESFASADO — CORREGIDO HOY** |
-| `tasks.md` | *(ver sección)* |
+| `tasks.md` | **DESFASADO** — el reparto de trabajo se apoya en una premisa caída |
 | `quickstart.md` | **DESFASADO — CORREGIDO HOY** |
 | `entrega-frontend.md` | *(ver sección)* |
 | `barrido-qa.md` | *(ver sección)* |
 | `dashboard-administrativo.md` | *(ver sección)* |
 | `infra/terraform/README.md` | **DESFASADO** |
+| `.env.example` | **DESFASADO** — nombres de variable que el código no lee |
 
 ---
 
@@ -63,6 +64,70 @@ Los nueve principios y las seis restricciones siguen siendo los que gobiernan el
 
 - **Principio II — «Frontend y backend DEBEN poder desplegarse de forma independiente».** Hoy viajan en la **misma imagen** y el reparto de rutas lo hace nginx dentro de la instancia (`infra/nginx.conf`). La razón está documentada en `infra/terraform/cdn.tf`: la cookie de sesión es `SameSite=Strict` y exige mismo origen; tener la lista de rutas en CloudFront obligaba a un `terraform apply` de quince minutos para algo que es enrutado de aplicación. El desacoplamiento **lógico** que exige el principio se mantiene (el contrato es OpenAPI); el **operativo** no.
 - **Principio III — dominios mínimos.** El documento nombra cinco (`Identidad/Roles`, `Catálogo/Inventario`, `Captura`, `Auditoría`, `Integración/Exportación`). El backend tiene diez: se añadieron `consolidacion`, `aprendizaje`, `presencia`, `consulta` y `metricas`. Son *mínimos*, así que no hay contradicción, pero el documento no anticipa el mapa real.
+
+---
+
+## `plan.md` — DESFASADO (el más grave)
+
+Es el documento que describe el stack **actual**, y por eso su desfase duele más que el de `research.md`. Ocho de las quince filas de su tabla de contexto técnico (§2) son falsas hoy:
+
+| Fila | Afirma | Es |
+|---|---|---|
+| Frontend | Vite 6 + React 19, PWA con Workbox | **Next.js 16.2.6** (App Router, `output: 'standalone'`), Tailwind 4 + shadcn/base-ui. No hay Vite en ningún `package.json`, ni Workbox, ni manifest, ni service worker |
+| Cliente local | IndexedDB vía Dexie como *write-ahead log* | Dexie no es dependencia. IndexedDB solo guarda **audio** (`frontend/lib/audio-store.ts`). La cola de conteos está en `localStorage` |
+| Voz | Deepgram Flux · WebRTC · Silero VAD · `speechSynthesis` | Ninguna de las cuatro. El audio va por WebSocket propio a **Gemini Live**, PCM 16 kHz sin WebRTC ni VAD; el readback lo hace **Amazon Polly** en servidor |
+| LLM | `claude-opus-5` vía OpenRouter para excepciones y Árbitro | El código existe y está **apagado en los dos frentes**: `PROVEEDOR_INTERPRETACION=simulado`, `PROVEEDOR_ARBITRAJE=determinista` |
+| Consulta supervisor | Grok Voice Agent (`wss://api.x.ai`) | `PROVEEDOR_AGENTE_VOZ=gemini`. `grok.ts` sobrevive sin verificar |
+| Cola / eventos | Outbox transaccional + **pg-boss** | pg-boss no es dependencia de nadie. `platform/eventos/outbox.ts` lo descarta por escrito: «el outbox YA es la cola» |
+| Pruebas | Vitest · Supertest · **Playwright (+ axe)** · k6 | Playwright y axe no están instalados. CI corre typecheck, lint, migración ida y vuelta, seed, vitest, k6 y terraform |
+| Despliegue | Frontend en **S3 + CloudFront** | Una sola instancia EC2 con **nginx** repartiendo API `:3000` y Next `:3001`. CloudFront quedó con **un solo origen** |
+
+Tres desfases más, fuera de la tabla:
+
+- **§3 y §4.2 — «seis módulos NestJS».** Son diez. Faltan `aprendizaje`, `consulta`, `presencia` y `metricas`, y ninguno tiene fila en la tabla de responsabilidades.
+- **§4.3 — «el backend nunca sostiene una conexión de voz (D-07-A)». Está invertido.** `proveedores/agente-voz/puente-voz.ts` monta un `WebSocketServer` en `/voz/sesion`, autentica el *upgrade* a mano y hace de puente hacia Gemini; `presencia.gateway.ts` sostiene otro. **Lo que corre es la «opción B»** que el propio plan avisó que cambiaría las cosas (§8, riesgos). Ocurrió y no se escribió.
+- **§6.1 — «el frontend lo desarrolla y despliega otro integrante, en su propio repositorio». Falso.** `frontend/` está en este monorepo, se llama `@cci/web`, está en `pnpm-workspace.yaml` y lo arrancan los scripts de la raíz. Es la afirmación más costosa del documento porque de ella cuelga todo el reparto de `tasks.md`.
+
+**No menciona en absoluto**: el cierre mensual por periodo, el módulo `metricas` y `/admin`, la guarda de bodega, y la capa `proveedores/sintesis/`. El presupuesto de rendimiento de §5 mide un pipeline (VAD + Flux + transcripción final) que ya no existe.
+
+---
+
+## `research.md` — HISTÓRICO, con nueve decisiones revocadas de facto
+
+Fechado 2026-07-24. Su formato («elegida · alternativas · reemplazo previsto») lo hace legítimamente histórico y **no está mal por ser viejo**. El matiz: ya rectifica en línea dos veces (D-05 y D-07, ambas el 2026-07-25), lo que establece que este documento **sí se actualiza** — y por eso los silencios se leen como vigencia. Quien lo consulte hoy debe saber que estas nueve fueron reemplazadas en la práctica:
+
+| Decisión | Dice | Corre |
+|---|---|---|
+| **D-03** | Vite + React, **no** Next.js (seis párrafos argumentándolo) | Next.js 16 con Server Components. Es la reversión más frontal del documento |
+| **D-06** | STT con Deepgram Flux | Nunca se encendió. El STT lo hace Gemini Live dentro del agente |
+| **D-07** | ✅ «cerrada en A»: navegador → Deepgram directo | Opera en **B**: el audio atraviesa nuestro servidor. El endpoint de A (`POST /voz/token/:rondaId`) existe sin consumidor |
+| **D-09** | LLM de excepciones y Árbitro con `claude-opus-5` | Ambos apagados. El árbitro es `determinista.ts` |
+| **D-10** | Modo consulta con Grok Voice Agent | Gemini Live |
+| **D-11** | WebRTC + Silero VAD en el navegador | WebSocket con `AudioContext` a 16 kHz. Ni WebRTC ni ONNX/Silero en el repo |
+| **D-12** | Readback por `speechSynthesis` («es gratis, funciona sin red») | **Amazon Polly en servidor.** Su «alternativa descartada» —TTS en la nube— es justo lo que se hizo |
+| **D-14** | Outbox + pg-boss | El outbox es la cola. La mitad de la decisión (outbox transaccional, idempotencia por `event_id`) **sigue vigente**; la del transporte, no |
+| **D-15** | IndexedDB (Dexie) como WAL | No implementado |
+| **D-25** | Frontend en S3 + CloudFront | Next en la misma instancia tras nginx. **El resto de D-25 sigue exacto**: EC2 + Docker Compose, ASG escrito y no construido |
+
+**Siguen vigentes y verificables en el código**: D-01, D-02, D-04, D-05, D-08 (gramática determinista compartida), D-13 (append-only con `UPDATE`/`DELETE` revocados), D-16 (doble sello de tiempo), D-18 (Redis), D-19 (`pg_trgm` + alias con sus dos umbrales), D-20 (argon2id + cookie), D-21, D-22 (Zod en `packages/contracts`), D-23 (OTel), D-24 (ERP tras un puerto, simulado, `oracle.ts` sin verificar tal como se anticipó).
+
+**D-17** (cacheo de prompts con TTL de 1 h) es un caso aparte: el código está escrito y no se ejecuta, porque el proveedor está apagado. Vigente en el papel, muerto en operación.
+
+**§Costos es obsoleto por construcción**: todo el modelo se apoya en «STT ≈ 50% del gasto» con tarifa de Deepgram y OpenRouter. Hoy no se paga ninguno de los dos; se paga Gemini Live + Polly. Las advertencias de «precios por verificar» siguen sin verificarse.
+
+---
+
+## `tasks.md` — DESFASADO
+
+Tres problemas, en orden de gravedad:
+
+1. **La premisa del reparto se cayó.** Todo el sistema de marcas 🟦/🟨/🟪 cita `plan.md §6.1` («el frontend va en otro repositorio»). Como el frontend **está en este repo**, cada 🟨 marcada «✅ requisito entregado al compañero» es hoy una tarea abierta de este equipo: **F-18** (Dexie/WAL), **F-21** (Service Worker + catálogo cacheado), **F-21b**, **F-22**, **F-25** (WebRTC + Silero VAD), **F-30** (readback por `speechSynthesis`, hoy Polly). Lo mismo con `H1-06`, `H6-01`, `H6-03` y `H6-05`.
+2. **El inventario de migraciones se detiene en 0010, de 17.** No hay tarea para `0011_fantasmas`, `0012_resolucion`, `0013_aliases_aprobados`, `0014_consulta`, `0015_propuestas`, ni para **`0016_periodos`** —el cambio de modelo de datos más grande desde la Fase 2— ni para `0017_unicidad_discrepancia`.
+3. **Hay ✅ sobre cosas que no existen.** `F-08` da por hecho un script `contracts:generate` (Zod → OpenAPI) con verificación de deriva en CI: **no existe el script**, no hay `zod-to-openapi`, no hay paso de deriva, y `contracts/openapi.yaml` se mantiene a mano. `F-10` marca pg-boss ✅. `F-23`/`F-24` marcan el adaptador de Deepgram y «D-07 cerrada en A» ✅. `F-28` marca el intérprete de OpenRouter ✅, apagado y sin inyectar. `H4-05` está **invertido**: dice «Árbitro `claude-opus-5` ✅ con respaldo determinista», y el determinista es el modo activo. `H9-01`/`H9-03` describen un candado sobre Grok, que ya no se usa.
+
+Menores: `S-04` dice seis módulos vacíos (son diez); `S-05` dice que el esqueleto Vite «sale de este repositorio» (ni sale, ni es Vite, ni es PWA); la nota «falta levantar Docker y correr `pnpm db:verificar`» quedó atrás — hay despliegue real en EC2 y CI corre la verificación en cada push; `C-02`/`C-03` dependen de Playwright, Lighthouse CI y axe, ninguno instalado.
+
+**Slices que faltan por completo**: el módulo `metricas` y el tablero `/admin` (existe `dashboard-administrativo.md` con 790 líneas y `tasks.md` ni lo enlaza), el cierre mensual por periodo, la guarda de bodega, el módulo `presencia` y la capa de síntesis.
 
 ---
 
@@ -122,9 +187,56 @@ Lo que sigue siendo cierto: la ausencia deliberada de NAT Gateway, el acceso por
 
 ---
 
+## `spec.md` — DESFASADO en puntos concretos, vigente en el grueso
+
+Es el documento central (754 líneas) y el núcleo funcional —D1 a D8, las historias 1 a 8, la inmensa mayoría de los 85 FR— sigue describiendo lo que el código hace. Miente en seis sitios:
+
+1. **§6 «Fuera de alcance del MVP» (línea 730)** — dice que quedan fuera «tableros analíticos e informes históricos más allá del consolidado de un inventario». Es exactamente lo que se construyó: `modules/metricas` expone siete rutas (`/metricas/periodos`, `/resumen`, `/detalle`, `/historia`, `/articulo`, `/causas`, `/autopulido`), `metricas.service.ts` compara meses con `generate_series`, y hay cuatro pantallas en `/admin`.
+2. **§5 «Entidades del dominio» (líneas 700-715)** — no existe la noción de **periodo**, ni de **consolidado histórico**, ni de **costo unitario**. Describe «Consolidado de bodega» (línea 711) como una vista viva única. Historia 7 (desde la línea 584) habla de «un inventario cerrado» en singular; el sistema cierra **uno por mes**.
+3. **§5 línea 703** — «Rol: Operador, Auditor o Administrador». Hay un cuarto: `supervisor` (`packages/contracts/src/comun.ts`), con módulo propio (`modules/consulta`) y lectura sobre las siete rutas de métricas. Ninguna historia lo cubre.
+4. **FR-4.9 (línea 441)** — «restringir el acceso a la vista de auditoría al rol Auditor». Hoy `auditoria.controller.ts` marca `@Roles('auditor','administrador')` en las cuatro rutas de lectura; solo el reconteo y la resolución de fantasma son exclusivos del Auditor.
+5. **El modelo de autorización creció y ningún FR lo dice.** El spec razona siempre en términos de rol. `platform/autorizacion/bodega.guard.ts` añadió una segunda dimensión: consulta `usuario_bodega` y devuelve `PROHIBIDO` si la bodega no está asignada, aunque el rol sea correcto. FR-1.3 solo exige «seleccionar una bodega».
+6. **Tres módulos no derivan de ninguna historia**: `aprendizaje` (alias, propuestas, crítica de rondas), `presencia` (WebSocket + Redis) y `consulta`. Y §6 línea 726 sigue diciendo que dar de alta fantasmas en el catálogo está fuera de alcance, mientras existe `POST /aprendizaje/alias` y la migración `0013_aliases_aprobados`.
+
+**Lo que el spec afirma y sigue siendo cierto** — no reportarlo como desfase: FR-1.22, FR-2.6 y R1 se sostienen (la resolución de nombre es determinista en `catalogo/resolucion.service.ts`; Gemini Live solo transcribe y dialoga, no resuelve); FR-3.7 y FR-4.8 están en `consolidacion.service.ts`; FR-7.2 (CSV + XLSX) en `integracion.controller.ts`; FR-8.1 en `catalogo/mermas.controller.ts`; la Historia 6 es real, con cola en `localStorage` y clave de idempotencia en `frontend/lib/store.tsx`.
+
+La dependencia declarada en la línea 635 (**Oracle Fusion Cloud**) sigue **sin verificar**: `PROVEEDOR_ERP` está fijado en `simulado` también en producción. Igual `PROVEEDOR_VOZ`: el adaptador de Deepgram existe (`proveedores/voz/deepgram.ts`) y no está encendido.
+
+---
+
+## `contracts/events.md` — DESFASADO (el peor de todos)
+
+Documenta **ocho** eventos. El código emite **tres**, todos desde `modules/captura/ronda.service.ts`.
+
+**Cinco eventos documentados que nadie publica**: `DiscrepanciaDetectada` (la discrepancia se abre con un `INSERT` directo en `consolidacion.service.ts`), `ArticuloConciliado`, `ReconteoRegistrado` (el módulo `auditoria` no importa el bus en ningún archivo), `InventarioCerrado` (el cierre escribe `cierre_inventario` y `consolidado_historico` en la misma transacción, sin outbox) y `InventarioExportado`. Existen como tipo Zod en `packages/contracts/src/eventos.ts`; no existen como comportamiento.
+
+**La columna «Lo consume» es falsa en tres filas.** `ConteoRegistrado` dice consumirse en `consolidacion` — pero `consolidacion.service.ts` declara `interesadoEn = ['RondaCerrada', 'ProductoFantasmaRegistrado']`: el evento entra al outbox, se marca despachado y no dispara nada. `DiscrepanciaDetectada` dice `auditoria`, que no implementa `Consumidor`. `ArticuloConciliado` e `InventarioCerrado` dicen `integracion`, que tampoco lo es.
+
+**Falta un consumidor real**: `aprendizaje/critico.service.ts` (`interesadoEn = ['RondaCerrada']`). El módulo `aprendizaje` ni aparece en el documento.
+
+**Los payloads no cuadran con el esquema**: `ConteoRegistrado` documenta un `origenParse` que no existe y omite `bodegaId`, que sí; `ProductoFantasmaRegistrado` omite `bodegaId` y `fantasmaId`; `ReconteoRegistrado` documenta un `itemId` inexistente; `InventarioExportado` documenta un `destino` que en realidad es `formato: 'csv'|'xlsx'|'erp'` más `referenciaEnvio`; y `InventarioCerrado` **no lleva `periodo`**, así que tras la migración 0016 ni siquiera identifica el cierre del que habla.
+
+**Lo que sí sigue vigente**: las cinco reglas de la sección final están todas implementadas — `bus.ts` exige la transacción en la firma, `despachador.ts` inserta `evento_procesado` antes del efecto y en la misma transacción, y `outbox.ts` valida el payload antes de escribir.
+
+---
+
+## `checklists/requirements.md` — HISTÓRICO, con tres afirmaciones que hoy son falsas
+
+Es una compuerta de fase previa a la planeación. Su veredicto —«COMPUERTA ABIERTA, la planeación técnica queda habilitada»— es un artefacto de un momento que ya pasó, no una afirmación sobre el sistema de hoy. **No hay que tocarlo.** Los conteos de la tabla §B siguen cuadrando: 85 FR y 35 SC.
+
+Con todo, tres cosas que ya no son ciertas, por si alguien lo lee como si fuera actual:
+
+- **§E · III** — «la estructura de módulos corresponde al plan». `plan.md` dice seis módulos; hay **diez**.
+- **§E · IV** — dice que los siete hitos del ciclo están definidos como transiciones observables. Solo **tres** llegaron al outbox. Discrepancia, consolidación, reconteo y cierre de inventario no son observables como evento.
+- **§F** — enumera los flujos de Operador, Auditor y Administrador. Falta el **Supervisor**.
+
+Defecto interno menor, anterior al código: el veredicto dice «los 42 ítems del checklist pasan»; el archivo tiene **45** casillas marcadas.
+
+---
+
 ## `.env.example` — DESFASADO (no está en la carpeta de entrega, pero se copia a `.env`)
 
-No es documentación de producto, pero `quickstart.md` manda copiarlo y **no arranca bien**. Nombra `ORACLE_FUSION_BASE_URL`, `ORACLE_FUSION_USER` y `ORACLE_FUSION_PASSWORD`; el código lee `ERP_BASE_URL`, `ERP_USUARIO` y `ERP_PASSWORD` (`config.ts`). Se pueden cargar las credenciales del ERP siguiendo el archivo al pie de la letra y que la aplicación no las vea nunca — es exactamente el fallo que `secretos.tf` documenta haber corregido en Terraform, y que en el `.env.example` sigue vivo. Faltan además `PROVEEDOR_TTS`, `PROVEEDOR_ARBITRAJE`, `PROVEEDOR_AGENTE_VOZ`, `GEMINI_API_KEY`, `XAI_API_KEY`, `BASE_URL_LLM` y `AWS_REGION`, y `PROVEEDOR_INTERPRETACION` ofrece `openrouter` como valor cuando el enum real es `anthropic`.
+No es documentación de producto, pero `quickstart.md` manda copiarlo y **no arranca bien**. Nombra `ORACLE_FUSION_BASE_URL`, `ORACLE_FUSION_USER` y `ORACLE_FUSION_PASSWORD`; el código lee `ERP_BASE_URL`, `ERP_USUARIO` y `ERP_PASSWORD` (`config.ts`). Se pueden cargar las credenciales del ERP siguiendo el archivo al pie de la letra y que la aplicación no las vea nunca — es exactamente el fallo que `secretos.tf` documenta haber corregido en Terraform, y que en el `.env.example` sigue vivo. Faltan además `PROVEEDOR_TTS`, `PROVEEDOR_ARBITRAJE`, `PROVEEDOR_AGENTE_VOZ`, `GEMINI_API_KEY`, `XAI_API_KEY`, `BASE_URL_LLM` y `AWS_REGION`; `PROVEEDOR_INTERPRETACION` ofrece `openrouter` como valor cuando el enum real es `anthropic`; y `API_CORS_ORIGIN` apunta a `http://localhost:5173`, el puerto de Vite, que ya no se usa.
 
 **No se corrigió aquí** porque es un archivo de configuración, no documentación. Es barato y vale la pena hacerlo.
 
