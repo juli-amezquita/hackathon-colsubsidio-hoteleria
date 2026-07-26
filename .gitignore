@@ -261,3 +261,17 @@ __marimo__/
 # Next.js
 .next/
 next-env.d.ts
+
+# ---------------------------------------------------------------------------
+# ⚠️ El `lib/` de la sección de Python (junto a `eggs/`, `sdist/`, `lib64/`) NO
+# significa lo mismo aquí.
+#
+# En este repositorio `lib/` no es salida de compilación: es el código fuente
+# del frontend. Esa línea estaba dejando FUERA DE GIT el cliente entero de la
+# API — `api.ts`, `agente-voz.ts`, `presencia.ts`, `auditoria.ts`,
+# `metricas.ts` —, así que un clon limpio del repositorio no compila. No se
+# notaba porque el `docker build` copia el árbol de trabajo, con los archivos
+# ignorados incluidos.
+# ---------------------------------------------------------------------------
+!frontend/lib/
+!frontend/lib/**
