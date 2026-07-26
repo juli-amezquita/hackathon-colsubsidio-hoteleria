@@ -45,11 +45,21 @@ function Cierre() {
   const [query, setQuery] = useState('')
   const [confirmando, setConfirmando] = useState(false)
   const [cerrando, setCerrando] = useState(false)
-  const [cerrado, setCerrado] = useState<{ articulosActualizados: number } | null>(null)
+  const [cerrado, setCerrado] = useState<{ periodo: string; saldosActualizados: number } | null>(null)
 
   useEffect(() => {
     if (ready && !activeWarehouseId) router.replace('/auditor')
   }, [ready, activeWarehouseId, router])
+
+  // Lo que de verdad impide cerrar son las DISCREPANCIAS ABIERTAS, no los
+  // artículos clasificados `auditable`.
+  //
+  // La diferencia importa y la pantalla la tenía mal: un artículo sigue siendo
+  // auditable para siempre —esa es la conclusión de los conteos—, aunque el
+  // Auditor ya lo haya resuelto con su causa. Contando auditables, esta
+  // pantalla avisaba de un bloqueo que no existía; y al revés, prometía
+  // «entrarán como están» sobre casos que el servidor rechaza con 400.
+  const [pendientes, setPendientes] = useState<number | null>(null)
 
   useEffect(() => {
     if (!activeWarehouseId) return
@@ -59,6 +69,10 @@ function Cierre() {
       .catch((e: unknown) =>
         setError(e instanceof Error ? e.message : 'No se pudo cargar el consolidado.'),
       )
+    api
+      .pendientesDeAuditoria(activeWarehouseId)
+      .then((p) => setPendientes(p.length))
+      .catch(() => setPendientes(null))
   }, [activeWarehouseId])
 
   const resumen = useMemo(
@@ -94,6 +108,11 @@ function Cierre() {
       setConfirmando(false)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo cerrar el inventario.')
+      // El modal se cierra TAMBIÉN al fallar. Si se queda abierto, su propio
+      // fondo oscuro tapa el mensaje de error que acaba de escribirse debajo:
+      // el Auditor ve el botón habilitarse otra vez, sin explicación, y vuelve
+      // a pulsarlo.
+      setConfirmando(false)
     } finally {
       setCerrando(false)
     }
@@ -120,7 +139,8 @@ function Cierre() {
               Inventario cerrado
             </p>
             <p className="mt-1 text-sm text-muted-foreground">
-              {cerrado.articulosActualizados} artículos actualizados en el sistema central con tu aval.
+              {cerrado.saldosActualizados} artículos actualizados en el sistema central con tu aval.
+              El consolidado de {cerrado.periodo} queda congelado y ya no cambia.
             </p>
           </section>
         )}
@@ -214,13 +234,21 @@ function Cierre() {
               Descargar consolidado (CSV)
             </a>
 
-            {resumen && resumen.auditables > 0 && (
+            {pendientes !== null && pendientes > 0 && (
               <p className="text-center text-xs text-warning-foreground">
-                Quedan {resumen.auditables} artículos auditables sin resolver.
+                Quedan {pendientes} {pendientes === 1 ? 'caso' : 'casos'} sin resolver. El cierre no
+                se puede avalar hasta que los atiendas.
               </p>
             )}
 
-            <Button size="block" onClick={() => setConfirmando(true)} disabled={cerrando}>
+            <Button
+              size="block"
+              onClick={() => setConfirmando(true)}
+              // Deshabilitado cuando el servidor va a rechazar de todos modos.
+              // Ofrecer un botón que siempre falla no es una advertencia: es
+              // una trampa, y en una demo se pulsa.
+              disabled={cerrando || (pendientes !== null && pendientes > 0)}
+            >
               <Lock className="h-[18px] w-[18px]" />
               Cerrar inventario
             </Button>
@@ -240,11 +268,10 @@ function Cierre() {
               cada persona afirmó. Al cerrar, tu consolidado pasa a ser el saldo oficial de{' '}
               <strong>{warehouse.name}</strong>. No se deshace.
             </p>
-            {resumen && resumen.auditables > 0 && (
-              <p className="mt-2 rounded-lg bg-warning/10 p-2 text-sm text-warning-foreground">
-                {resumen.auditables} artículos siguen sin resolver y entrarán como están.
-              </p>
-            )}
+            <p className="mt-2 text-sm text-muted-foreground">
+              Se actualizan los artículos con valor final. Lo que nadie contó no pisa el saldo que el
+              sistema ya tenía.
+            </p>
             <div className="mt-4 flex flex-col gap-2">
               <Button size="block" loading={cerrando} onClick={() => void cerrar()}>
                 {cerrando ? 'Cerrando…' : 'Sí, cerrar el inventario'}

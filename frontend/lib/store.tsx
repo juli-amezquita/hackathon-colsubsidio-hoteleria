@@ -295,7 +295,22 @@ export function CountProvider({ children }: { children: ReactNode }) {
               articuloId: e.articuloId,
               cantidad: e.quantity,
               unidadId: e.unidadId,
-              textoDictado: e.transcript || null,
+              // Un conteo SOSTENIDO viaja como texto aunque se hubiera dictado.
+              //
+              // No es un detalle de formato: `pendiente_de_resolver` exige
+              // evidencia de audio para todo lo sostenido en modo voz, y este
+              // producto no graba audio en ningún punto (`pendingAudioRef` solo
+              // se pone a `null`, no existe un `MediaRecorder`). El resultado
+              // era una ronda que NO SE PODÍA CERRAR JAMÁS: el operario
+              // sostenía su conteo, el servidor pedía un audio que nadie podía
+              // subir, y el cierre quedaba bloqueado para siempre.
+              //
+              // Sostener es pulsar un botón en la pantalla, no dictar. Que
+              // viaje como texto describe lo que de verdad ocurrió y conserva
+              // la respuesta a la alerta, que es lo que FR-2.4 exige. El
+              // dictado original ya está en el libro, inmutable, en el registro
+              // anterior.
+              textoDictado: e.alertaRespondida === true ? null : e.transcript || null,
               confirmaCorreccion: e.isDuplicate,
               // `alertaRespondida` es lo que el operario contestó cuando el
               // servidor marcó discrepancia. Sin esto el registro se reenvía
