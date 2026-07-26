@@ -113,5 +113,5 @@ vida en ningún lado. Se cambia sin tocar el resto de la configuración.
 
 **El frontend.** Lo construye y despliega otro integrante del equipo, en su propio
 repositorio y con su propio pipeline. La frontera entre los dos es el contrato
-OpenAPI (`specs/001-captura-inventarios/contracts/openapi.yaml`), no un despliegue
+OpenAPI (`documentacion/03-arquitectura/api-http.yaml`), no un despliegue
 compartido — que es justamente lo que exige el Principio II.

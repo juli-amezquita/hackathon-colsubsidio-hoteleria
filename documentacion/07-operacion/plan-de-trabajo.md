@@ -1,6 +1,6 @@
 # Tareas de Implementación
 
-**Feature**: `001-captura-inventarios` · **Deriva de**: [plan.md](./plan.md) · [data-model.md](./data-model.md) · [contracts/](./contracts/)
+**Feature**: `001-captura-inventarios` · **Deriva de**: [plan.md](../03-arquitectura/plan-tecnico.md) · [data-model.md](../03-arquitectura/modelo-de-datos.md) · [contracts/](./contracts/)
 
 Orden: **1 Setup → 2 Fundamentos bloqueantes → 3 Vertical slices por historia.**
 
@@ -83,7 +83,7 @@ Todo lo que **más de una historia** necesita. Nada de la Fase 3 empieza sin est
 
 | # | | Tarea | Notas |
 |---|---|---|---|
-| F-18 | 🟨 | Dexie como *write-ahead log*: escribir → confirmar → encolar | ✅ requisito entregado en [entrega-frontend.md](./entrega-frontend.md) |
+| F-18 | 🟨 | Dexie como *write-ahead log*: escribir → confirmar → encolar | ✅ requisito entregado en [entrega-frontend.md](contrato-con-el-frontend.md) |
 | F-19 | 🟪 | Clave de idempotencia UUIDv7 en cliente + `ON CONFLICT DO NOTHING` en servidor | ✅ servidor hecho y probado con 10 reintentos simultáneos |
 | F-20 | 🟪 | **Doble sello de tiempo**: `capturado_en` anclado a referencia del servidor + `recibido_en` autoritativo + `desfase_reloj_ms` | ✅ servidor hecho: `GET /tiempo` + dos columnas + desfase con signo |
 | F-21 | 🟨 | Service Worker (Workbox): app shell y **catálogo de la bodega** en caché — habilita la resolución local del nombre sin red. **El saldo esperado jamás se cachea** | ✅ requisito entregado al frontend |

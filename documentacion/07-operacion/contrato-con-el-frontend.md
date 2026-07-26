@@ -2,7 +2,7 @@
 
 **Para:** quien construye el frontend · **De:** el equipo de backend · **Fecha:** 2026-07-25
 
-El contrato de la API está en [`contracts/openapi.yaml`](./contracts/openapi.yaml) y los tipos en el paquete `@cci/contracts`. Eso resuelve *qué* se llama y *con qué forma*.
+El contrato de la API está en [`contracts/openapi.yaml`](../03-arquitectura/api-http.yaml) y los tipos en el paquete `@cci/contracts`. Eso resuelve *qué* se llama y *con qué forma*.
 
 Este documento es lo otro: **cuatro comportamientos que no se ven en el contrato y que, si nadie los pide explícitamente, no aparecen.** No son detalles de implementación — son requisitos con criterio de aceptación, y cada uno corresponde a una tarea del plan.
 

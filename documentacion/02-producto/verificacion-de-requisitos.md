@@ -3,7 +3,7 @@
 **Feature**: Captura Inteligente de Inventarios (MVP)
 **Propósito**: Compuerta previa a la planeación técnica. Mientras un ítem esté sin marcar, **no se planifica tecnología ni se escribe código**.
 **Creado**: 2026-07-24 · **Última verificación**: 2026-07-25
-**Documento evaluado**: [spec.md](../spec.md)
+**Documento evaluado**: [spec.md](especificacion-funcional.md)
 
 ---
 

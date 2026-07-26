@@ -64,7 +64,7 @@ pnpm db:seed             # carga el archivo real del cliente
 pnpm dev                 # API en :3000, pantallas en :3001
 ```
 
-Detalle en [`quickstart.md`](specs/001-captura-inventarios/quickstart.md).
+Detalle en [`puesta-en-marcha.md`](documentacion/07-operacion/puesta-en-marcha.md).
 
 ```bash
 pnpm test        # 349 pruebas
@@ -96,17 +96,17 @@ el código, no un modelo.
 
 ## Documentación
 
-Índice completo en [`docs/`](docs/README.md).
+Índice completo en [`documentacion/`](documentacion/README.md).
 
 | Documento | Qué responde |
 |---|---|
-| [Especificación funcional](specs/001-captura-inventarios/spec.md) | Qué hace el sistema, historia por historia |
-| [Constitución](.specify/memory/constitution.md) | Los principios que rigen cada decisión |
-| [Plan técnico](specs/001-captura-inventarios/plan.md) | Cómo está construido |
-| [Investigación](specs/001-captura-inventarios/research.md) | Las decisiones D-01…D-25 y por qué |
-| [Modelo de datos](specs/001-captura-inventarios/data-model.md) | Las tablas y sus invariantes |
-| [Tablero administrativo](specs/001-captura-inventarios/dashboard-administrativo.md) | El diseño del informe de gerencia |
-| [Barrido de QA](specs/001-captura-inventarios/barrido-qa.md) | Lo auditado, lo corregido y lo pendiente |
+| [Especificación funcional](documentacion/02-producto/especificacion-funcional.md) | Qué hace el sistema, historia por historia |
+| [Constitución](documentacion/01-fundamentos/principios.md) | Los principios que rigen cada decisión |
+| [Plan técnico](documentacion/03-arquitectura/plan-tecnico.md) | Cómo está construido |
+| [Investigación](documentacion/03-arquitectura/decisiones-de-diseno.md) | Las decisiones D-01…D-25 y por qué |
+| [Modelo de datos](documentacion/03-arquitectura/modelo-de-datos.md) | Las tablas y sus invariantes |
+| [Tablero administrativo](documentacion/05-tablero/diseno-del-tablero.md) | El diseño del informe de gerencia |
+| [Barrido de QA](documentacion/06-calidad/barrido-de-qa.md) | Lo auditado, lo corregido y lo pendiente |
 | [Infraestructura](infra/terraform/README.md) | Qué se despliega y cómo |
 
 ## Lo que falta, dicho sin adornos
@@ -120,4 +120,4 @@ el código, no un modelo.
   stock: no hay forma de emparejarlas sin adivinar. Están las 8 con datos.
 - **El adaptador de Oracle Fusion no se ha probado** contra una instancia real.
 - **Quedan hallazgos abiertos** del barrido de QA, listados por gravedad y con su
-  escenario concreto en [`barrido-qa.md`](specs/001-captura-inventarios/barrido-qa.md).
+  escenario concreto en [`barrido-de-qa.md`](documentacion/06-calidad/barrido-de-qa.md).

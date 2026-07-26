@@ -1,3 +1,6 @@
+> Nota: `SPEC.md`, citado a lo largo de este documento, es
+> [el encargo del cliente](./el-encargo-del-cliente.md).
+
 # Constitución del Proyecto
 ## Captura Inteligente de Inventarios — Colsubsidio
 

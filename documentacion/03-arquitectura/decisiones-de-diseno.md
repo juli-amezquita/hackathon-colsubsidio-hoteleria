@@ -1,7 +1,7 @@
 # Fase 0 — Investigación y Decisiones Técnicas
 
 **Feature**: Captura Inteligente de Inventarios (MVP) · **Fecha**: 2026-07-24
-**Entrada**: [spec.md](./spec.md) (D1–D6) · [Constitución v1.0.0](../../.specify/memory/constitution.md)
+**Entrada**: [Especificación funcional](../02-producto/especificacion-funcional.md) (D1–D6) · [Principios](../01-fundamentos/principios.md)
 
 Cada decisión declara: **elegida · razón · alternativas descartadas · implementación MVP · limitación conocida · señal de escalado · reemplazo previsto.**
 

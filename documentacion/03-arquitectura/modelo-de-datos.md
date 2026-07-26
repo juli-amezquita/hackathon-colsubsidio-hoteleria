@@ -1,7 +1,7 @@
 # Modelo de Datos y Migraciones
 
 **Feature**: `001-captura-inventarios` · **Motor**: PostgreSQL 17 · **Acceso**: Drizzle ORM
-**Deriva de**: [spec.md](./spec.md) D1–D6 · [research.md](./research.md) D-13 a D-16
+**Deriva de**: [spec.md](../02-producto/especificacion-funcional.md) D1–D6 · [research.md](decisiones-de-diseno.md) D-13 a D-16
 
 ---
 

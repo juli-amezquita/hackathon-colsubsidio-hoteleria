@@ -1,7 +1,7 @@
 # Plan de Implementación: Captura Inteligente de Inventarios (MVP)
 
 **Feature**: `001-captura-inventarios` · **Fecha**: 2026-07-24
-**Spec**: [spec.md](./spec.md) · **Investigación**: [research.md](./research.md) · **Datos**: [data-model.md](./data-model.md) · **Contratos**: [contracts/](./contracts/) · **Validación**: [quickstart.md](./quickstart.md)
+**Spec**: [spec.md](../02-producto/especificacion-funcional.md) · **Investigación**: [research.md](decisiones-de-diseno.md) · **Datos**: [data-model.md](modelo-de-datos.md) · **Contratos**: [contracts/](./contracts/) · **Validación**: [quickstart.md](../07-operacion/puesta-en-marcha.md)
 
 ---
 
@@ -192,7 +192,7 @@ infra/terraform/                  # TODO lo que vive en AWS. Nada se toca a mano
 └── entornos/mvp.tfvars
 
 tests/perf/                       # k6
-specs/001-captura-inventarios/    # este conjunto de documentos
+documentacion/                    # este conjunto de documentos
 ```
 
 **Decisión de estructura**: monorepo pnpm con la API y un paquete de contratos compartido. El monorepo satisface la fuente única de contratos (Principio VI) sin impedir el despliegue independiente (Principio II). El frontend queda fuera del monorepo precisamente porque lo construye otro equipo: su única dependencia es el contrato publicado.
