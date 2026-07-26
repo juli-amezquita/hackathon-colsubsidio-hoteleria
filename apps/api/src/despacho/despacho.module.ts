@@ -7,6 +7,8 @@ import {
 } from '@nestjs/common';
 
 import { config } from '../config';
+import { AprendizajeModule } from '../modules/aprendizaje/aprendizaje.module';
+import { CriticoService } from '../modules/aprendizaje/critico.service';
 import { ConsolidacionModule } from '../modules/consolidacion/consolidacion.module';
 import { ConsolidacionService } from '../modules/consolidacion/consolidacion.service';
 import { conexion } from '../platform/db/cliente';
@@ -35,10 +37,13 @@ import { DespachadorOutbox } from '../platform/eventos/despachador';
 export class DespachadorService implements OnApplicationBootstrap, OnApplicationShutdown {
   private despachador: DespachadorOutbox | undefined;
 
-  constructor(@Inject(ConsolidacionService) private readonly consolidacion: ConsolidacionService) {}
+  constructor(
+    @Inject(ConsolidacionService) private readonly consolidacion: ConsolidacionService,
+    @Inject(CriticoService) private readonly critico: CriticoService,
+  ) {}
 
   private get consumidores(): readonly Consumidor[] {
-    return [this.consolidacion];
+    return [this.consolidacion, this.critico];
   }
 
   onApplicationBootstrap(): void {
@@ -68,7 +73,7 @@ export class DespachadorService implements OnApplicationBootstrap, OnApplication
 }
 
 @Module({
-  imports: [ConsolidacionModule],
+  imports: [ConsolidacionModule, AprendizajeModule],
   providers: [DespachadorService],
   exports: [DespachadorService],
 })

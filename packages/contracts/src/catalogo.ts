@@ -78,3 +78,10 @@ export const AliasAprobadoSchema = z.object({
   alias: z.string().trim().min(2),
 });
 export type AliasAprobado = z.infer<typeof AliasAprobadoSchema>;
+
+/** La decisión sobre una propuesta de mejora. La nota es para el que venga. */
+export const DecisionPropuestaSchema = z.object({
+  aprobar: z.boolean(),
+  nota: z.string().trim().max(500).optional(),
+});
+export type DecisionPropuesta = z.infer<typeof DecisionPropuestaSchema>;

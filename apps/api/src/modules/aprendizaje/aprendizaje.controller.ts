@@ -1,10 +1,11 @@
-import { Body, Controller, Get, Inject, Post, Query, Req } from '@nestjs/common';
-import { AliasAprobadoSchema } from '@cci/contracts';
+import { Body, Controller, Get, Inject, Param, Post, Query, Req } from '@nestjs/common';
+import { AliasAprobadoSchema, DecisionPropuestaSchema } from '@cci/contracts';
 
 import { Roles } from '../../platform/autorizacion/decoradores';
 import type { PeticionAutenticada } from '../../platform/autorizacion/sesion.guard';
 import { cuerpo } from '../../platform/validacion/zod.pipe';
 import { AprendizajeService } from './aprendizaje.service';
+import { CriticoService } from './critico.service';
 
 /**
  * El reporte con el que el sistema se examina a sí mismo.
@@ -15,7 +16,10 @@ import { AprendizajeService } from './aprendizaje.service';
  */
 @Controller('aprendizaje')
 export class AprendizajeController {
-  constructor(@Inject(AprendizajeService) private readonly aprendizaje: AprendizajeService) {}
+  constructor(
+    @Inject(AprendizajeService) private readonly aprendizaje: AprendizajeService,
+    @Inject(CriticoService) private readonly critico: CriticoService,
+  ) {}
 
   /**
    * El reporte del periodo. Por defecto, los últimos 30 días.
@@ -38,6 +42,43 @@ export class AprendizajeController {
       hasta: fin.toISOString(),
       ...(bodegaId ? { bodegaId } : {}),
     });
+  }
+
+  /** El panel: lo que espera decisión, o lo ya decidido. */
+  @Get('propuestas')
+  @Roles('auditor', 'administrador')
+  async propuestas(@Query('estado') estado?: string) {
+    return { items: await this.aprendizaje.listarPropuestas(estado) };
+  }
+
+  /**
+   * Aprueba o rechaza una propuesta.
+   *
+   * Aprobar un alias lo aplica en el acto —es un dato—. Aprobar una mejora de
+   * gramática la deja `aprobada` y genera trabajo para un desarrollador: eso es
+   * código, y prometer que el sistema se reescribe solo sería prometer justo lo
+   * que no debe hacer.
+   */
+  @Post('propuestas/:propuestaId/decision')
+  @Roles('administrador')
+  decidir(
+    @Param('propuestaId') propuestaId: string,
+    @Body(cuerpo(DecisionPropuestaSchema)) datos: { aprobar: boolean; nota?: string },
+    @Req() req: PeticionAutenticada,
+  ) {
+    return this.aprendizaje.decidir(propuestaId, datos.aprobar, req.usuario!.usuarioId, datos.nota);
+  }
+
+  /**
+   * La crítica de cada ronda cerrada.
+   *
+   * ⚠️ Evalúa al SISTEMA, no a la persona. Ningún hallazgo se refiere al
+   * operario; el nombre está para poder volver al libro, no para calificarlo.
+   */
+  @Get('bodegas/:bodegaId/criticas')
+  @Roles('auditor', 'administrador')
+  async criticas(@Param('bodegaId') bodegaId: string) {
+    return { items: await this.critico.criticas(bodegaId) };
   }
 
   /**

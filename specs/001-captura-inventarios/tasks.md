@@ -231,8 +231,10 @@ Cada slice atraviesa datos → dominio → API → UI → pruebas, y termina en 
 | AP-03 | `GET /aprendizaje/reporte` — sin saldos, rol Auditor/Administrador | ✅ verificado en producción |
 | AP-04 | `POST /aprendizaje/alias` — una persona aprueba, con nombre y fecha | ✅ el alias resuelve desde el instante siguiente |
 | AP-05 | Keyterms del catálogo en la credencial de voz | ✅ 55 términos verificados en producción |
+| AP-06 | Ciclo de vida: `propuesta → aprobada/rechazada → aplicada`, con autor | ✅ huella estable; lo rechazado no reaparece |
+| AP-07 | Crítico por ronda cerrada: puntos flojos **del sistema**, con cómo se arreglan | ✅ consumidor de `RondaCerrada`; ningún hallazgo califica a una persona |
 
-**Demostrable**: tres operarios desambiguan lo mismo a mano, el sistema propone el alias con su evidencia, el Administrador lo aprueba y el nombre resuelve desde el instante siguiente.
+**Demostrable**: tres operarios desambiguan lo mismo a mano → el sistema propone el alias con su evidencia → el Administrador lo aprueba en el panel → el nombre resuelve desde el instante siguiente. Y al cerrar cada ronda, el crítico escribe qué punto flojo tuvo **el sistema** y cómo se arregla.
 
 ### Slice 9 — Modo consulta del supervisor (extra)
 

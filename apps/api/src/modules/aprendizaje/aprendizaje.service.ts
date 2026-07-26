@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 
 import { conexion } from '../../platform/db/cliente';
 import {
@@ -10,7 +10,7 @@ import {
   type ProveedorDeSenalesDeCaptura,
   type Ventana,
 } from '../../platform/dominio/senales';
-import { proponer } from './propuestas';
+import { proponer, type Propuesta } from './propuestas';
 
 /**
  * El dominio `aprendizaje` — el sistema mirándose a sí mismo.
@@ -39,7 +39,9 @@ export class AprendizajeService {
       this.aliasExistentes(),
     ]);
 
-    const propuestas = proponer(captura, alias);
+    // Se PERSISTEN antes de devolverlas: una propuesta que solo existe mientras
+    // se mira no se puede aprobar, ni rechazar, ni saber que ya se rechazó.
+    const propuestas = await this.registrar(proponer(captura, alias), v.bodegaId ?? null);
 
     return {
       ventana: { desde: v.desde, hasta: v.hasta, bodegaId: v.bodegaId ?? null },
@@ -68,11 +70,141 @@ export class AprendizajeService {
         diferenciasReales: auditoria.diferenciasReales,
         tasaDeErrorDeCaptura: tasa(auditoria.erroresDeCaptura, auditoria.reconteos),
       },
-      propuestas,
+      // Solo las que esperan decisión. Las rechazadas no vuelven a asomar: un
+      // panel que insiste con lo que ya le dijeron que no se deja de leer.
+      propuestas: propuestas.filter((p) => p.estado === 'propuesta'),
       // Lo que el reporte NO dice, y conviene que se lea: ninguna propuesta se
       // aplicó sola. Todas esperan a una persona.
       aplicadas: 0,
     };
+  }
+
+  /**
+   * Guarda las propuestas conservando el estado que ya tuvieran.
+   *
+   * La huella es la identidad. Al volver a detectar una que ya existe se
+   * actualiza su evidencia —creció el número de repeticiones— pero **no su
+   * estado**: una rechazada sigue rechazada aunque la evidencia se acumule, y
+   * una aplicada no se vuelve a proponer.
+   */
+  private async registrar(propuestas: readonly Propuesta[], bodegaId: string | null) {
+    const guardadas: { estado: string; propuestaId: string; tipo: string; accion: string; evidencia: string; veces: number; aplicable: unknown }[] = [];
+
+    for (const p of propuestas) {
+      const [fila] = await conexion()<
+        { id: string; estado: string }[]
+      >`
+        INSERT INTO propuesta_mejora (id, tipo, huella, accion, evidencia, veces, bodega_id, aplicable)
+        VALUES (${randomUUID()}, ${p.tipo}, ${p.huella}, ${p.accion}, ${p.evidencia},
+                ${p.veces}, ${bodegaId}, ${p.aplicable === null ? null : conexion().json(p.aplicable)})
+        ON CONFLICT (huella) DO UPDATE
+          SET accion = EXCLUDED.accion,
+              evidencia = EXCLUDED.evidencia,
+              veces = EXCLUDED.veces,
+              vista_en = now()
+        RETURNING id, estado`;
+
+      guardadas.push({
+        propuestaId: fila!.id,
+        estado: fila!.estado,
+        tipo: p.tipo,
+        accion: p.accion,
+        evidencia: p.evidencia,
+        veces: p.veces,
+        aplicable: p.aplicable,
+      });
+    }
+
+    return guardadas;
+  }
+
+  /** El panel: lo que espera decisión, o lo ya decidido. */
+  async listarPropuestas(estado?: string) {
+    const filas = await conexion()<
+      {
+        id: string; tipo: string; accion: string; evidencia: string; veces: number;
+        estado: string; aplicable: unknown; detectada_en: Date;
+        decidida_en: Date | null; nota: string | null; usuario: string | null;
+      }[]
+    >`
+      SELECT p.id, p.tipo, p.accion, p.evidencia, p.veces, p.estado, p.aplicable,
+             p.detectada_en, p.decidida_en, p.nota, u.nombre AS usuario
+      FROM propuesta_mejora p
+      LEFT JOIN usuario u ON u.id = p.decidida_por
+      WHERE ${estado ? conexion()`p.estado = ${estado}::estado_propuesta` : conexion()`true`}
+      ORDER BY p.estado, p.veces DESC
+      LIMIT 200`;
+
+    return filas.map((f) => ({
+      propuestaId: f.id,
+      tipo: f.tipo,
+      accion: f.accion,
+      evidencia: f.evidencia,
+      veces: f.veces,
+      estado: f.estado,
+      // Solo las aplicables se resuelven con un clic. Las demás son trabajo
+      // para una persona, y decirlo evita prometer lo que no se cumple.
+      seAplicaSola: f.aplicable !== null,
+      detectadaEn: f.detectada_en.toISOString(),
+      decididaEn: f.decidida_en?.toISOString() ?? null,
+      decididaPor: f.usuario,
+      nota: f.nota,
+    }));
+  }
+
+  /**
+   * Aprueba una propuesta. Y aquí está la distinción que importa.
+   *
+   * Un alias es un DATO: aprobarlo lo aplica en el acto y queda `aplicada`.
+   * Una mejora de gramática es CÓDIGO: aprobarla la marca `aprobada` y genera
+   * trabajo para un desarrollador. Prometer que el sistema se reescribe solo
+   * sería prometer justo lo que no debe hacer.
+   */
+  async decidir(propuestaId: string, aprobar: boolean, usuarioId: string, nota?: string) {
+    const [p] = await conexion()<
+      { id: string; estado: string; tipo: string; aplicable: { bodegaId: string; articuloId: string; alias: string } | null }[]
+    >`SELECT id, estado, tipo, aplicable FROM propuesta_mejora WHERE id = ${propuestaId}`;
+
+    if (!p) {
+      throw new NotFoundException({ codigo: 'PROPUESTA_NO_ENCONTRADA', mensaje: 'La propuesta no existe.' });
+    }
+    if (p.estado !== 'propuesta') {
+      throw new BadRequestException({
+        codigo: 'PROPUESTA_YA_DECIDIDA',
+        mensaje: `Esta propuesta ya está ${p.estado}.`,
+      });
+    }
+
+    if (!aprobar) {
+      await conexion()`
+        UPDATE propuesta_mejora
+           SET estado = 'rechazada', decidida_por = ${usuarioId}, decidida_en = now(), nota = ${nota ?? null}
+         WHERE id = ${propuestaId}`;
+      return { propuestaId, estado: 'rechazada', aplicada: false };
+    }
+
+    if (p.aplicable === null) {
+      await conexion()`
+        UPDATE propuesta_mejora
+           SET estado = 'aprobada', decidida_por = ${usuarioId}, decidida_en = now(), nota = ${nota ?? null}
+         WHERE id = ${propuestaId}`;
+      return {
+        propuestaId,
+        estado: 'aprobada',
+        aplicada: false,
+        nota: 'Aprobada. Requiere trabajo de desarrollo: no se aplica sola.',
+      };
+    }
+
+    const r = await this.aplicarAlias(p.aplicable.bodegaId, p.aplicable.articuloId, p.aplicable.alias, usuarioId);
+
+    await conexion()`
+      UPDATE propuesta_mejora
+         SET estado = 'aplicada', decidida_por = ${usuarioId}, decidida_en = now(),
+             aplicada_en = now(), nota = ${nota ?? null}
+       WHERE id = ${propuestaId}`;
+
+    return { propuestaId, estado: 'aplicada', aplicada: true, detalle: r };
   }
 
   /**

@@ -6,6 +6,7 @@ import postgres from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { AppModule } from '../src/app.module';
+import { DespachadorService } from '../src/despacho/despacho.module';
 import { SesionService } from '../src/modules/identidad/sesion.service';
 import { SesionGuard } from '../src/platform/autorizacion/sesion.guard';
 import { opcionesSsl } from '../src/platform/db/ssl';
@@ -41,6 +42,7 @@ describe('Aprendizaje · el reporte y sus propuestas', () => {
   let cookieAdmin: string;
   let unidadId: string;
   let desde: string;
+  let despachador: DespachadorService;
 
   const pedir = (cookie: string, opciones: { method: string; url: string; payload?: unknown }) =>
     app.getHttpAdapter().getInstance().inject({
@@ -73,6 +75,7 @@ describe('Aprendizaje · el reporte y sus propuestas', () => {
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
 
+    despachador = app.get(DespachadorService);
     cookieOperador = await entrar('1000000001');
     cookieAuditor = await entrar('1000000002');
     cookieAdmin = await entrar('1000000003');
@@ -127,6 +130,30 @@ describe('Aprendizaje · el reporte y sus propuestas', () => {
         capturadoEn: new Date().toISOString(), claveIdempotencia: randomUUID(), ...extra,
       },
     });
+
+  /** Cierra la ronda y espera a que el crítico la haya procesado. */
+  const cerrar = async (ronda: string, bodega: string): Promise<void> => {
+    const cuadre = await pedir(cookieOperador, { method: 'GET', url: `/rondas/${ronda}/cuadre-cierre` });
+    const r = await pedir(cookieOperador, {
+      method: 'POST', url: `/rondas/${ronda}/cierre`,
+      payload: {
+        decisiones: cuadre.json<{ pendientes: { articuloId: string }[] }>().pendientes.map((p) => ({
+          articuloId: p.articuloId, estado: 'no_contado', claveIdempotencia: randomUUID(),
+        })),
+      },
+    });
+    expect(r.statusCode, r.body.slice(0, 200)).toBe(201);
+
+    for (let i = 0; i < 40; i++) {
+      await despachador.pasada();
+      const [p] = await sql<{ n: number }[]>`
+        SELECT count(*)::int n FROM outbox
+        WHERE despachado_en IS NULL AND payload->>'bodegaId' = ${bodega}`;
+      if ((p?.n ?? 0) === 0) return;
+      await new Promise((res) => setTimeout(res, 25));
+    }
+    throw new Error(`El evento de ${bodega} no se despachó.`);
+  };
 
   const reporte = (bodegaId: string, cookie = cookieAuditor) =>
     pedir(cookie, { method: 'GET', url: `/aprendizaje/reporte?desde=${desde}&bodegaId=${bodegaId}` });
@@ -307,6 +334,191 @@ describe('Aprendizaje · el reporte y sus propuestas', () => {
     it('el reporte deja dicho que NINGUNA propuesta se aplicó sola', async () => {
       const { bodegaId: b } = await bodegaCon(['X']);
       expect((await reporte(b)).json<{ aplicadas: number }>().aplicadas).toBe(0);
+    });
+  });
+
+  // ────────────────────────────────────────────────────────────────────
+  // El ciclo de vida: propuesta → decisión → (aplicada o tarea)
+  // ────────────────────────────────────────────────────────────────────
+
+  describe('⭐ el ciclo de vida de la propuesta', () => {
+    /** Genera una propuesta de alias real y devuelve su id persistido. */
+    const conPropuestaDeAlias = async () => {
+      const { bodegaId: b, ids } = await bodegaCon(['ARTICULO CON ALIAS']);
+
+      for (let i = 0; i < 3; i++) {
+        const ronda = await abrirRonda(b);
+        await contar(ronda, ids[0]!, 10, {
+          origenNombre: 'seleccion_usuario', textoDictado: `como le dicen ${b.slice(0, 6)}`,
+        });
+      }
+
+      const d = (await reporte(b)).json<{
+        propuestas: { propuestaId: string; tipo: string; estado: string }[];
+      }>();
+      const alias = d.propuestas.find((p) => p.tipo === 'alias')!;
+      return { bodegaId: b, propuestaId: alias.propuestaId, estado: alias.estado };
+    };
+
+    it('nace en estado `propuesta` y persiste', async () => {
+      const { propuestaId, estado } = await conPropuestaDeAlias();
+      expect(estado).toBe('propuesta');
+      expect(propuestaId).toBeTruthy();
+    });
+
+    it('correr el reporte dos veces NO la duplica', async () => {
+      const { bodegaId: b, propuestaId } = await conPropuestaDeAlias();
+      const segunda = (await reporte(b)).json<{ propuestas: { propuestaId: string }[] }>();
+
+      // La huella se deriva del contenido, no del texto: la evidencia crece y
+      // la identidad no cambia.
+      expect(segunda.propuestas.map((p) => p.propuestaId)).toContain(propuestaId);
+
+      const [filas] = await sql<{ n: number }[]>`
+        SELECT count(*)::int n FROM propuesta_mejora WHERE id = ${propuestaId}`;
+      expect(filas!.n).toBe(1);
+    });
+
+    it('aprobar un ALIAS lo aplica en el acto: es un dato', async () => {
+      const { propuestaId } = await conPropuestaDeAlias();
+
+      const r = await pedir(cookieAdmin, {
+        method: 'POST', url: `/aprendizaje/propuestas/${propuestaId}/decision`,
+        payload: { aprobar: true },
+      });
+
+      expect(r.statusCode).toBe(201);
+      expect(r.json<{ estado: string; aplicada: boolean }>()).toMatchObject({
+        estado: 'aplicada', aplicada: true,
+      });
+    });
+
+    it('aprobar una de GRAMÁTICA NO la aplica: eso es código', async () => {
+      const { bodegaId: b, ids } = await bodegaCon(['CON TEXTO RARO']);
+      const ronda = await abrirRonda(b);
+      for (let i = 0; i < 2; i++) {
+        await contar(ronda, ids[0]!, 10, {
+          origenParse: 'modelo', textoDictado: `frase que la gramatica no entiende ${b.slice(0, 6)}`,
+          confirmaCorreccion: i > 0,
+        });
+      }
+
+      const d = (await reporte(b)).json<{ propuestas: { propuestaId: string; tipo: string; seAplicaSola?: boolean }[] }>();
+      const g = d.propuestas.find((p) => p.tipo === 'gramatica')!;
+
+      const r = await pedir(cookieAdmin, {
+        method: 'POST', url: `/aprendizaje/propuestas/${g.propuestaId}/decision`,
+        payload: { aprobar: true },
+      });
+
+      // Prometer que el sistema se reescribe solo sería prometer justo lo que
+      // no debe hacer. Queda aprobada, y es trabajo para alguien.
+      const cuerpo = r.json<{ estado: string; aplicada: boolean; nota: string }>();
+      expect(cuerpo.estado).toBe('aprobada');
+      expect(cuerpo.aplicada).toBe(false);
+      expect(cuerpo.nota).toMatch(/trabajo de desarrollo/i);
+    });
+
+    it('⭐ una propuesta RECHAZADA no vuelve a aparecer', async () => {
+      const { bodegaId: b, propuestaId } = await conPropuestaDeAlias();
+
+      await pedir(cookieAdmin, {
+        method: 'POST', url: `/aprendizaje/propuestas/${propuestaId}/decision`,
+        payload: { aprobar: false, nota: 'Ese nombre lo usa solo un turno' },
+      });
+
+      // El reporte se vuelve a correr y la evidencia sigue ahí. Si la propuesta
+      // reapareciera, el panel insistiría con lo que ya le dijeron que no — y a
+      // la tercera vez se deja de leer.
+      const d = (await reporte(b)).json<{ propuestas: { propuestaId: string }[] }>();
+      expect(d.propuestas.map((p) => p.propuestaId)).not.toContain(propuestaId);
+
+      const [fila] = await sql<{ estado: string; nota: string }[]>`
+        SELECT estado, nota FROM propuesta_mejora WHERE id = ${propuestaId}`;
+      expect(fila).toMatchObject({ estado: 'rechazada', nota: 'Ese nombre lo usa solo un turno' });
+    });
+
+    it('no se decide dos veces', async () => {
+      const { propuestaId } = await conPropuestaDeAlias();
+      const url = `/aprendizaje/propuestas/${propuestaId}/decision`;
+
+      await pedir(cookieAdmin, { method: 'POST', url, payload: { aprobar: true } });
+      const segunda = await pedir(cookieAdmin, { method: 'POST', url, payload: { aprobar: false } });
+
+      expect(segunda.statusCode).toBe(400);
+      expect(segunda.json<{ codigo: string }>().codigo).toBe('PROPUESTA_YA_DECIDIDA');
+    });
+
+    it('toda decisión queda con autor y momento', async () => {
+      const { propuestaId } = await conPropuestaDeAlias();
+      await pedir(cookieAdmin, {
+        method: 'POST', url: `/aprendizaje/propuestas/${propuestaId}/decision`,
+        payload: { aprobar: true },
+      });
+
+      const [fila] = await sql<{ usuario: string; decidida_en: Date }[]>`
+        SELECT u.nombre AS usuario, p.decidida_en FROM propuesta_mejora p
+        JOIN usuario u ON u.id = p.decidida_por WHERE p.id = ${propuestaId}`;
+
+      expect(fila!.usuario).toBe('Administrador de Prueba');
+      expect(fila!.decidida_en).toBeInstanceOf(Date);
+    });
+
+    it('solo el Administrador decide; el Auditor mira', async () => {
+      const { propuestaId } = await conPropuestaDeAlias();
+      const url = `/aprendizaje/propuestas/${propuestaId}/decision`;
+
+      expect((await pedir(cookieOperador, { method: 'POST', url, payload: { aprobar: true } })).statusCode).toBe(403);
+      expect((await pedir(cookieAuditor, { method: 'POST', url, payload: { aprobar: true } })).statusCode).toBe(403);
+      // Mirar el panel sí puede.
+      expect((await pedir(cookieAuditor, { method: 'GET', url: '/aprendizaje/propuestas' })).statusCode).toBe(200);
+    });
+  });
+
+  // ────────────────────────────────────────────────────────────────────
+  // El crítico
+  // ────────────────────────────────────────────────────────────────────
+
+  describe('el crítico de cada ronda', () => {
+    it('se escribe al cerrar la ronda, sin que nadie la pida', async () => {
+      const { bodegaId: b, ids } = await bodegaCon(['UNO', 'DOS']);
+      const ronda = await abrirRonda(b);
+      await contar(ronda, ids[0]!, 10);
+      await contar(ronda, ids[1]!, 10);
+      await cerrar(ronda, b);
+
+      const { items } = (await pedir(cookieAuditor, {
+        method: 'GET', url: `/aprendizaje/bodegas/${b}/criticas`,
+      })).json<{ items: { rondaId: string; relato: string; hallazgos: { punto: string; comoSeArregla: string }[] }[] }>();
+
+      const c = items.find((i) => i.rondaId === ronda)!;
+      expect(c.relato).toMatch(/2 conteos/);
+      expect(c.hallazgos.length).toBeGreaterThan(0);
+      // Cada punto flojo dice cómo se arregla, o el informe no sirve.
+      expect(c.hallazgos.every((h) => h.comoSeArregla.length > 3)).toBe(true);
+    });
+
+    it('detecta que la gramática se quedó corta', async () => {
+      const { bodegaId: b, ids } = await bodegaCon(['A', 'B', 'C', 'D']);
+      const ronda = await abrirRonda(b);
+      for (const [i, id] of ids.entries()) {
+        await contar(ronda, id, 10, i < 2 ? { origenParse: 'modelo', textoDictado: `raro ${i}` } : {});
+      }
+      await cerrar(ronda, b);
+
+      const { items } = (await pedir(cookieAuditor, {
+        method: 'GET', url: `/aprendizaje/bodegas/${b}/criticas`,
+      })).json<{ items: { rondaId: string; hallazgos: { punto: string }[] }[] }>();
+
+      const c = items.find((i) => i.rondaId === ronda)!;
+      expect(c.hallazgos.map((h) => h.punto).join(' ')).toMatch(/gramática/i);
+    });
+
+    it('el Operador no lee las críticas', async () => {
+      const { bodegaId: b } = await bodegaCon(['X']);
+      expect((await pedir(cookieOperador, {
+        method: 'GET', url: `/aprendizaje/bodegas/${b}/criticas`,
+      })).statusCode).toBe(403);
     });
   });
 });

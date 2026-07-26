@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { SenalesModule } from '../../composicion/senales.module';
 import { AprendizajeController } from './aprendizaje.controller';
 import { AprendizajeService } from './aprendizaje.service';
+import { CriticoService } from './critico.service';
 
 /**
  * Dominio `aprendizaje` — el sistema mirándose a sí mismo.
@@ -18,6 +19,7 @@ import { AprendizajeService } from './aprendizaje.service';
 @Module({
   imports: [SenalesModule],
   controllers: [AprendizajeController],
-  providers: [AprendizajeService],
+  providers: [AprendizajeService, CriticoService],
+  exports: [CriticoService],
 })
 export class AprendizajeModule {}

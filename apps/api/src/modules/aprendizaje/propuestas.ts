@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { normalizar } from '@cci/gramatica';
 
 import type { SenalesDeCaptura } from '../../platform/dominio/senales';
@@ -20,6 +22,15 @@ export type TipoPropuesta = 'alias' | 'gramatica' | 'confusion_numerica' | 'cata
 
 export interface Propuesta {
   readonly tipo: TipoPropuesta;
+  /**
+   * Identidad estable, derivada del CONTENIDO y no del texto.
+   *
+   * El texto de la acción lleva el número de repeticiones dentro, así que
+   * cambia en cuanto llega una más. Si la identidad dependiera de él, una
+   * propuesta rechazada volvería a aparecer como nueva a la semana siguiente —
+   * y un panel que insiste con lo que ya le dijeron que no se deja de leer.
+   */
+  readonly huella: string;
   /** Qué hacer, en una frase que una persona pueda aprobar o rechazar. */
   readonly accion: string;
   /** Por qué. Con números, no con adjetivos. */
@@ -63,6 +74,7 @@ export function proponer(
 
     propuestas.push({
       tipo: 'alias',
+      huella: huella('alias', d.bodegaId, d.articuloId, alias),
       accion: `Registrar "${d.texto}" como alias de ${d.articulo}`,
       evidencia: `${d.veces} operarios lo eligieron a mano de la lista de candidatos`,
       veces: d.veces,
@@ -79,6 +91,7 @@ export function proponer(
     if (t.veces < MINIMO_TEXTOS) continue;
     propuestas.push({
       tipo: 'gramatica',
+      huella: huella('gramatica', normalizar(t.texto)),
       accion: `Agregar "${t.texto}" a las pruebas de la gramática`,
       evidencia: `La gramática no lo resolvió ${t.veces} veces; se resolvió por ${t.origenParse}`,
       veces: t.veces,
@@ -97,6 +110,7 @@ export function proponer(
     const [antes, despues] = par.split('→');
     propuestas.push({
       tipo: 'confusion_numerica',
+      huella: huella('confusion', par),
       accion: `Revisar la confusión ${antes} → ${despues}: pedir confirmación explícita cuando se dicte ${antes}`,
       evidencia: `${casos.length} correcciones con el mismo par; difieren en un solo dígito`,
       veces: casos.length,
@@ -108,6 +122,7 @@ export function proponer(
   if (senales.fantasmasConCandidatosDescartados >= MINIMO_TEXTOS) {
     propuestas.push({
       tipo: 'catalogo',
+      huella: huella('catalogo', 'fantasmas-con-candidatos'),
       accion: 'Revisar si el catálogo maestro tiene artículos duplicados o mal nombrados',
       evidencia:
         `${senales.fantasmasConCandidatosDescartados} hallazgos se reportaron como no registrados ` +
@@ -118,6 +133,17 @@ export function proponer(
   }
 
   return propuestas.sort((a, b) => b.veces - a.veces);
+}
+
+/**
+ * La identidad de una propuesta.
+ *
+ * Se calcula sobre lo que la define —tipo, bodega, artículo, alias— y NUNCA
+ * sobre la evidencia, que crece con cada repetición. Es lo que permite que el
+ * reporte corra mil veces sin duplicar nada y que un rechazo se sostenga.
+ */
+function huella(...partes: readonly string[]): string {
+  return createHash('sha256').update(partes.join('|')).digest('hex').slice(0, 32);
 }
 
 /**
