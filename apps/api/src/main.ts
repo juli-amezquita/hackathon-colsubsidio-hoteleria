@@ -52,6 +52,29 @@ async function arrancar(): Promise<void> {
   app.get(PuenteDeVoz).montar(app.getHttpServer());
   app.get(PresenciaGateway).montar(app.getHttpServer());
 
+  // Qué proveedor quedó activo, dicho en voz alta al arrancar.
+  //
+  // Producción llevaba corriendo en modo simulado sin que nadie lo hubiera
+  // decidido: ningún `PROVEEDOR_*` existía en SSM y la aplicación caía a los
+  // valores por defecto en silencio. No había forma de saberlo sin entrar a la
+  // máquina y leer un `.env`.
+  //
+  // Va al log de arranque y no a `/salud`, que es público: el nombre del
+  // proveedor no es un secreto, pero tampoco hace falta anunciárselo a
+  // internet. El log del despliegue se sube a S3, así que queda consultable.
+  //
+  // Solo NOMBRES. Ninguna credencial pasa por aquí.
+  console.info(
+    'Proveedores activos: ' +
+      [
+        `voz=${c.PROVEEDOR_VOZ}`,
+        `agente-voz=${c.PROVEEDOR_AGENTE_VOZ}`,
+        `arbitraje=${c.PROVEEDOR_ARBITRAJE}`,
+        `interpretacion=${c.PROVEEDOR_INTERPRETACION}`,
+        `erp=${c.PROVEEDOR_ERP}`,
+      ].join(' · '),
+  );
+
   for (const senal of ['SIGINT', 'SIGTERM'] as const) {
     process.once(senal, () => {
       void (async () => {

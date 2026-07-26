@@ -64,16 +64,44 @@ export function config(): Configuracion {
   // Un proveedor real sin credencial es un error de configuración, no un caso
   // a degradar en silencio: quien lo activó espera que funcione.
   const c = resultado.data;
-  if (c.PROVEEDOR_VOZ === 'deepgram' && !c.DEEPGRAM_API_KEY) {
-    throw new Error('PROVEEDOR_VOZ=deepgram exige DEEPGRAM_API_KEY');
-  }
-  if (c.PROVEEDOR_ARBITRAJE === 'anthropic' && !c.OPENROUTER_API_KEY) {
-    throw new Error('PROVEEDOR_ARBITRAJE=anthropic exige OPENROUTER_API_KEY');
-  }
-  if (c.PROVEEDOR_INTERPRETACION === 'anthropic' && !c.OPENROUTER_API_KEY) {
-    throw new Error('PROVEEDOR_INTERPRETACION=anthropic exige OPENROUTER_API_KEY');
-  }
+  exigirCredencial(c.PROVEEDOR_VOZ === 'deepgram', 'PROVEEDOR_VOZ=deepgram', 'DEEPGRAM_API_KEY', c.DEEPGRAM_API_KEY);
+  exigirCredencial(c.PROVEEDOR_ARBITRAJE === 'anthropic', 'PROVEEDOR_ARBITRAJE=anthropic', 'OPENROUTER_API_KEY', c.OPENROUTER_API_KEY);
+  exigirCredencial(c.PROVEEDOR_INTERPRETACION === 'anthropic', 'PROVEEDOR_INTERPRETACION=anthropic', 'OPENROUTER_API_KEY', c.OPENROUTER_API_KEY);
+  exigirCredencial(c.PROVEEDOR_AGENTE_VOZ === 'gemini', 'PROVEEDOR_AGENTE_VOZ=gemini', 'GEMINI_API_KEY', c.GEMINI_API_KEY);
+  exigirCredencial(c.PROVEEDOR_AGENTE_VOZ === 'grok', 'PROVEEDOR_AGENTE_VOZ=grok', 'XAI_API_KEY', c.XAI_API_KEY);
+  exigirCredencial(c.PROVEEDOR_ERP === 'oracle', 'PROVEEDOR_ERP=oracle', 'ERP_BASE_URL', c.ERP_BASE_URL);
+  exigirCredencial(c.PROVEEDOR_ERP === 'oracle', 'PROVEEDOR_ERP=oracle', 'ERP_USUARIO', c.ERP_USUARIO);
+  exigirCredencial(c.PROVEEDOR_ERP === 'oracle', 'PROVEEDOR_ERP=oracle', 'ERP_PASSWORD', c.ERP_PASSWORD);
 
   cache = c;
   return cache;
+}
+
+/**
+ * El marcador de «pendiente» NO es una credencial.
+ *
+ * Terraform crea cada parámetro de proveedor con el texto
+ * `PENDIENTE-cargar-con-aws-ssm-put-parameter` para que exista sin poner un
+ * secreto en el estado. La comprobación anterior era `!c.CLAVE`, y ese texto
+ * es una cadena no vacía: pasaba.
+ *
+ * El efecto era el peor de los dos posibles. Quien encendiera
+ * `PROVEEDOR_ARBITRAJE=anthropic` creyendo que ya estaba configurado veía la
+ * API arrancar sin una queja, y luego **cada llamada al árbitro fallaba en
+ * caliente**: el Auditor recibía una síntesis vacía etiquetada como `anthropic`,
+ * sin saber que no había modelo detrás. Una guarda que no guarda es peor que no
+ * tenerla, porque se confía en ella.
+ */
+function exigirCredencial(activo: boolean, proveedor: string, nombre: string, valor: string | undefined): void {
+  if (!activo) return;
+
+  if (!valor?.trim()) {
+    throw new Error(`${proveedor} exige ${nombre}, y no está definida.`);
+  }
+  if (/^PENDIENTE/i.test(valor.trim())) {
+    throw new Error(
+      `${proveedor} exige ${nombre}, y su valor sigue siendo el marcador de Terraform. ` +
+        `Cárgala de verdad:  aws ssm put-parameter --name /cci/mvp/${nombre} --type SecureString --value '…' --overwrite`,
+    );
+  }
 }
