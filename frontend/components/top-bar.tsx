@@ -15,7 +15,7 @@ export function TopBar({
   title?: string
   subtitle?: string
   backHref?: string
-  roleTag?: 'Afiliado' | 'Auditor'
+  roleTag?: 'Afiliado' | 'Auditor' | 'Administración'
 }) {
   const router = useRouter()
   const { session, logout } = useCountStore()
@@ -57,7 +57,9 @@ export function TopBar({
               'rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide',
               roleTag === 'Afiliado'
                 ? 'bg-primary-soft text-primary'
-                : 'bg-warning-soft text-warning-foreground',
+                : roleTag === 'Auditor'
+                  ? 'bg-warning-soft text-warning-foreground'
+                  : 'bg-serie-fantasma/15 text-serie-fantasma',
             )}
           >
             {roleTag}
