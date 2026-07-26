@@ -225,15 +225,31 @@ export const codigosDeRazon = () =>
     (r) => r.items,
   )
 
+/**
+ * Un caso de la bandeja. Artículo del catálogo **o** hallazgo sin catálogo.
+ *
+ * Los tres últimos campos vienen `null` en los artículos y con valor en los
+ * hallazgos, y el cliente los declaraba de menos: para un hallazgo no hay
+ * código ni nombre canónico, así que la descripción, la unidad observada y la
+ * cantidad reportada son lo único que permite identificarlo.
+ */
+export interface PendienteDeAuditoria {
+  articuloId: string | null
+  fantasmaId: string | null
+  nombre: string
+  motivo: string
+  /** Solo en hallazgos: cómo lo describió quien lo tenía en la mano. */
+  descripcion: string | null
+  /** Solo en hallazgos: texto libre —"caja", "bulto"—, no una unidad del catálogo. */
+  unidadObservada: string | null
+  /** Solo en hallazgos. Cadena, no número: la escala decimal se conserva. */
+  cantidadReportada: string | null
+}
+
 export const pendientesDeAuditoria = (bodegaId: string) =>
-  pedir<{
-    items: {
-      articuloId: string | null
-      fantasmaId: string | null
-      nombre: string
-      motivo: string
-    }[]
-  }>(`/auditoria/bodegas/${bodegaId}/pendientes`).then((r) => r.items)
+  pedir<{ items: PendienteDeAuditoria[] }>(`/auditoria/bodegas/${bodegaId}/pendientes`).then(
+    (r) => r.items,
+  )
 
 export interface RondaDelCaso {
   rondaId: string
@@ -271,18 +287,53 @@ export interface CasoAuditoria {
 export const casoDeAuditoria = (bodegaId: string, articuloId: string) =>
   pedir<CasoAuditoria>(`/auditoria/bodegas/${bodegaId}/articulos/${articuloId}`)
 
+/**
+ * El caso de un hallazgo sin catálogo (H5-05).
+ *
+ * Los nombres son los que devuelve `AuditoriaService.casoFantasma`, comprobados
+ * uno a uno contra su `return`. Aquí había un envoltorio `fantasma:{…}` que la
+ * respuesta nunca ha tenido —el hallazgo viene plano— y un `candidatosCatalogo`
+ * donde el servidor manda `candidatosDescartados`. Con ese tipo, cualquier
+ * pantalla que lo consumiera habría leído `undefined` en todos los campos sin
+ * que TypeScript dijera nada: el tipo se declara a mano y nada lo confronta con
+ * la respuesta real.
+ *
+ * ⚠️ **No hay `saldoEsperado` ni `diferencia`, y no es un olvido**: no existe
+ * saldo contra el cual comparar un producto que el catálogo no conoce (FR-5.4).
+ * Esa ausencia es el hallazgo.
+ */
 export interface CasoFantasma {
-  fantasma: {
+  fantasmaId: string
+  descripcion: string
+  /** Texto libre: lo que el operario dijo, no una unidad de `unidad_medida`. */
+  unidadObservada: string
+  /**
+   * Las unidades del catálogo controlado, para poder resolver.
+   *
+   * Un hallazgo no trae unidad válida —`unidadObservada` es «caja» o «bulto»—
+   * y el reconteo exige una. Antes la única fuente al alcance del Auditor eran
+   * los candidatos descartados, y el caso común es que no haya ninguno: el
+   * hallazgo quedaba sin resolver y, como el cierre exige que no queden
+   * discrepancias abiertas, bloqueaba el inventario de la bodega para siempre.
+   */
+  unidades: { id: string; nombre: string; esPeso: boolean }[]
+  /** Cadena, no número: conserva la escala decimal del servidor. */
+  cantidad: string
+  operador: string
+  /** La ronda en que apareció. Sirve para separar hallazgos de rondas distintas. */
+  rondaId: string
+  modoCaptura: string
+  recibidoEn: string
+  /** Lo que el catálogo le ofreció y él descartó. Es evidencia, no telemetría (H5-04). */
+  candidatosDescartados: ArticuloDeTrabajo[]
+  /** Hallazgos de otras rondas de la misma bodega. Se PRESENTAN; unirlos es del Auditor (FR-5.5). */
+  otrosHallazgos: {
     fantasmaId: string
     descripcion: string
-    unidadObservada: string
     cantidad: string
     operador: string
-    recibidoEn: string
-    modoCaptura: string
-  }
-  candidatosCatalogo: unknown
-  otrosHallazgos: { fantasmaId: string; descripcion: string; cantidad: string; operador: string }[]
+    rondaId: string
+  }[]
 }
 
 export const casoDeFantasma = (bodegaId: string, fantasmaId: string) =>
@@ -293,6 +344,11 @@ export const casoDeFantasma = (bodegaId: string, fantasmaId: string) =>
  *
  * Sin causa no se cierra nada (R4, FR-4.4): una discrepancia sin explicación es
  * un número que nadie puede defender ante el sistema central.
+ *
+ * ⚠️ `unidadId` es el id de una unidad del catálogo controlado, y el hallazgo
+ * **no lo trae**: su `unidadObservada` es texto libre. La única fuente que esta
+ * ruta pone al alcance del Auditor son las unidades de los
+ * `candidatosDescartados` del propio caso.
  */
 export const resolverFantasma = (
   bodegaId: string,

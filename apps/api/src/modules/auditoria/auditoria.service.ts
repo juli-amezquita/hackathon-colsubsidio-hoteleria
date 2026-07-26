@@ -293,10 +293,38 @@ export class AuditoriaService implements ProveedorDePendientes {
       WHERE pf.bodega_id = ${bodegaId} AND pf.id <> ${fantasmaId}
       ORDER BY pf.recibido_en`;
 
+    // Las unidades del catálogo controlado.
+    //
+    // Un hallazgo NO tiene unidad: `unidad_observada` es texto libre — lo que
+    // el operario dijo, «caja», «bulto»— y `reconteo.unidad_id` es una clave
+    // foránea obligatoria. Sin esta lista el Auditor no tenía de dónde sacar
+    // una unidad válida: las únicas con identificador que su rol alcanzaba
+    // venían de los candidatos descartados, y **el caso común es que no haya
+    // ninguno**. El resultado era que el hallazgo no se podía resolver y, como
+    // el cierre exige que no queden discrepancias abiertas, un solo hallazgo
+    // bloqueaba el inventario de esa bodega para siempre.
+    //
+    // Son las unidades que ESA bodega maneja, no la tabla entera.
+    //
+    // `unidad_medida` es global y con el tiempo acumula filas que no vienen al
+    // caso; ofrecerlas todas convierte una decisión de tres opciones en una
+    // lista donde hay que buscar. Se derivan del catálogo de la bodega, que es
+    // exactamente el conjunto en el que tiene sentido registrar un conteo allí.
+    //
+    // No hay nada reservado en esto: son nombres de unidades de medida, no
+    // saldos ni cantidades.
+    const unidades = await conexion()<{ id: string; nombre: string; es_peso: boolean }[]>`
+      SELECT DISTINCT um.id, um.nombre, um.es_peso
+      FROM articulo a
+      JOIN unidad_medida um ON um.id = a.unidad_esperada_id
+      WHERE a.bodega_id = ${bodegaId} AND a.activo
+      ORDER BY um.nombre`;
+
     return {
       fantasmaId: f.id,
       descripcion: f.descripcion,
       unidadObservada: f.unidad_observada,
+      unidades: unidades.map((u) => ({ id: u.id, nombre: u.nombre, esPeso: u.es_peso })),
       cantidad: f.cantidad,
       operador: f.operador,
       rondaId: f.ronda_id,
