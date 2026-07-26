@@ -322,15 +322,7 @@ export class RondaService implements ProveedorDeRondas {
   async cuadreDeCierre(rondaId: string, operadorId: string) {
     const ronda = await this.rondaAbiertaDe(rondaId, operadorId);
 
-    const filas = await conexion()<{ id: string; nombre: string; codigo: string | null }[]>`
-      SELECT a.id, a.nombre, a.codigo
-      FROM articulo a
-      WHERE a.bodega_id = ${ronda.bodega_id} AND a.activo
-        AND NOT EXISTS (
-          SELECT 1 FROM registro_conteo r
-          WHERE r.ronda_id = ${rondaId} AND r.articulo_id = a.id
-        )
-      ORDER BY a.nombre`;
+    const filas = await this.pendientesDeCuadre(conexion(), ronda.bodega_id, rondaId);
 
     // Lo que impide cerrar, dicho antes de intentarlo. Sale de la MISMA vista
     // que aplica el bloqueo, así que la pantalla no puede prometer un cierre
@@ -360,6 +352,42 @@ export class RondaService implements ProveedorDeRondas {
     const ronda = await this.rondaAbiertaDe(rondaId, operadorId);
 
     return conexion().begin(async (trx) => {
+      // Una decisión de cierre solo es legítima sobre un artículo que el cuadre
+      // listó como pendiente. Sin esta puerta, el Operador podía enterrar su
+      // propia alerta: bastaba con mandar `no_contado` sobre un artículo que YA
+      // tenía un conteo advertido para insertar una fila de mayor secuencia que
+      // pasaba a ser la vigente. `pendiente_de_resolver` dejaba de listarlo, el
+      // cierre procedía, y la alerta quedaba sin responder (FR-2.4, FR-2.8).
+      //
+      // El daño no era solo el cierre: al filtrarse los `no_contado`, la
+      // consolidación veía el artículo como `sin_cobertura` en vez de
+      // `discrepancia`, y el Auditor perdía la evidencia de que alguien contó
+      // 60 contra un saldo de 100 — justo lo que este sistema existe para
+      // conservar.
+      //
+      // Se pregunta por la MISMA lista que el cuadre muestra, así que también
+      // cubre el artículo que ni siquiera es de esta bodega: antes llegaba
+      // hasta el INSERT y reventaba con un 500 por clave foránea (o por el
+      // CHECK `contado_exige_cantidad`, con `unidad_id` en NULL).
+      const delCuadre = await this.pendientesDeCuadre(trx, ronda.bodega_id, rondaId);
+      const disponibles = new Set(delCuadre.map((p) => p.id));
+
+      // `delete` devuelve false cuando el artículo no estaba en la lista: o no
+      // era pendiente, o ya lo consumió otra decisión de este mismo envío —una
+      // segunda decisión sobre el mismo artículo supersede a la primera y es
+      // otra puerta al mismo entierro—.
+      const rechazados = decisiones.filter((d) => !disponibles.delete(d.articuloId));
+
+      if (rechazados.length > 0) {
+        throw new BadRequestException({
+          codigo: 'DECISION_NO_PENDIENTE',
+          mensaje:
+            `${rechazados.length} decisiones no corresponden a artículos pendientes del cuadre de cierre. ` +
+            'Vuelva a pedir el cuadre y decida solo sobre lo que lista.',
+          detalles: { articulos: rechazados.map((d) => d.articuloId) },
+        });
+      }
+
       for (const d of decisiones) {
         // `contado_en_cero` es una afirmación sobre el estante —"fui, miré, no
         // había"— y por eso se valida igual que cualquier cantidad (FR-2.7,
@@ -414,16 +442,17 @@ export class RondaService implements ProveedorDeRondas {
       // El cierre se bloquea si algo quedó sin resolver. Un artículo en estado
       // indefinido al cerrar es una discrepancia que nadie va a poder explicar
       // después.
-      const sinResolver = await trx<{ n: number }[]>`
-        SELECT count(*)::int n FROM articulo a
-        WHERE a.bodega_id = ${ronda.bodega_id} AND a.activo
-          AND NOT EXISTS (SELECT 1 FROM registro_conteo r
-                          WHERE r.ronda_id = ${rondaId} AND r.articulo_id = a.id)`;
+      //
+      // Se vuelve a preguntar a la base en vez de restar del conjunto de
+      // arriba: un `ON CONFLICT DO NOTHING` pudo saltarse una inserción si la
+      // clave de idempotencia ya existía, y ahí el conjunto en memoria diría
+      // que el artículo quedó decidido cuando no hay fila que lo sostenga.
+      const sinResolver = await this.pendientesDeCuadre(trx, ronda.bodega_id, rondaId);
 
-      if ((sinResolver[0]?.n ?? 0) > 0) {
+      if (sinResolver.length > 0) {
         throw new BadRequestException({
           codigo: 'CUADRE_INCOMPLETO',
-          mensaje: `Quedan ${sinResolver[0]!.n} artículos sin decidir entre contado en cero y no contado.`,
+          mensaje: `Quedan ${sinResolver.length} artículos sin decidir entre contado en cero y no contado.`,
         });
       }
 
@@ -661,6 +690,31 @@ export class RondaService implements ProveedorDeRondas {
   /** Interfaz publicada (`ProveedorDeRondas`): mismo método, nombre estable. */
   bodegaDeRondaPropia(rondaId: string, operadorId: string): Promise<string> {
     return this.bodegaDeRonda(rondaId, operadorId);
+  }
+
+  /**
+   * Los artículos sobre los que la ronda todavía no afirmó nada.
+   *
+   * Vive en un solo sitio porque lo consultan tres partes que TIENEN que
+   * coincidir: el cuadre —que los muestra—, el cierre —que solo acepta
+   * decisiones sobre ellos— y la comprobación final —que impide cerrar si
+   * queda alguno—. Escritas por separado divergirían justo en el punto donde
+   * una deja pasar lo que otra bloquea.
+   */
+  private pendientesDeCuadre(
+    sql: postgres.Sql | postgres.TransactionSql,
+    bodegaId: string,
+    rondaId: string,
+  ) {
+    return sql<{ id: string; nombre: string; codigo: string | null }[]>`
+      SELECT a.id, a.nombre, a.codigo
+      FROM articulo a
+      WHERE a.bodega_id = ${bodegaId} AND a.activo
+        AND NOT EXISTS (
+          SELECT 1 FROM registro_conteo r
+          WHERE r.ronda_id = ${rondaId} AND r.articulo_id = a.id
+        )
+      ORDER BY a.nombre`;
   }
 
   /** Una ronda cerrada es inmutable: no admite más registros (FR-1.17). */
