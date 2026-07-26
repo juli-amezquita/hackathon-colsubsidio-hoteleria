@@ -53,7 +53,7 @@ let cache: Configuracion | undefined;
 export function config(): Configuracion {
   if (cache) return cache;
 
-  const resultado = EsquemaEntorno.safeParse(process.env);
+  const resultado = EsquemaEntorno.safeParse(sinMarcadores(process.env));
   if (!resultado.success) {
     const detalle = resultado.error.issues
       .map((i) => `  ${i.path.join('.')}: ${i.message}`)
@@ -77,6 +77,40 @@ export function config(): Configuracion {
   return cache;
 }
 
+/** Los nombres que llegaron con el marcador. Para poder decirlo en el error. */
+const MARCADOR = /^PENDIENTE/i;
+const pendientes = new Set<string>();
+
+/**
+ * Un parámetro con el marcador de Terraform vale lo mismo que no estar.
+ *
+ * Terraform crea cada parámetro de proveedor con el texto
+ * `PENDIENTE-cargar-con-aws-ssm-put-parameter` para que exista sin poner un
+ * secreto en el estado, y el arranque los vuelca todos al entorno.
+ *
+ * ⚠️ Esto tumbó producción. `ERP_BASE_URL` se valida con `.url()`, y el
+ * marcador no es una URL: el esquema lo rechazaba, `config()` lanzaba, el
+ * contenedor moría en bucle y nginx —que depende de que la API esté sana— se
+ * quedaba devolviendo 502 en todo. Un parámetro que solo dice «esto todavía no
+ * está cargado» no puede tumbar el proceso por no tener la forma del dato que
+ * algún día contendrá.
+ *
+ * Limpiarlos aquí, ANTES de validar, deja una sola definición de «no
+ * configurado» para todo el sistema: ausente y marcador son lo mismo.
+ */
+function sinMarcadores(entorno: NodeJS.ProcessEnv): Record<string, string | undefined> {
+  pendientes.clear();
+  const limpio: Record<string, string | undefined> = {};
+  for (const [clave, valor] of Object.entries(entorno)) {
+    if (typeof valor === 'string' && MARCADOR.test(valor.trim())) {
+      pendientes.add(clave);
+      continue;
+    }
+    limpio[clave] = valor;
+  }
+  return limpio;
+}
+
 /**
  * El marcador de «pendiente» NO es una credencial.
  *
@@ -93,15 +127,12 @@ export function config(): Configuracion {
  * tenerla, porque se confía en ella.
  */
 function exigirCredencial(activo: boolean, proveedor: string, nombre: string, valor: string | undefined): void {
-  if (!activo) return;
+  if (!activo || valor?.trim()) return;
 
-  if (!valor?.trim()) {
-    throw new Error(`${proveedor} exige ${nombre}, y no está definida.`);
-  }
-  if (/^PENDIENTE/i.test(valor.trim())) {
-    throw new Error(
-      `${proveedor} exige ${nombre}, y su valor sigue siendo el marcador de Terraform. ` +
-        `Cárgala de verdad:  aws ssm put-parameter --name /cci/mvp/${nombre} --type SecureString --value '…' --overwrite`,
-    );
-  }
+  throw new Error(
+    pendientes.has(nombre)
+      ? `${proveedor} exige ${nombre}, y su valor sigue siendo el marcador de Terraform. ` +
+        `Cárgala de verdad:  aws ssm put-parameter --name /cci/mvp/${nombre} --type SecureString --value '…' --overwrite`
+      : `${proveedor} exige ${nombre}, y no está definida.`,
+  );
 }
