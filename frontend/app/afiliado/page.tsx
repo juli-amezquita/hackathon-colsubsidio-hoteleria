@@ -1,12 +1,12 @@
 'use client'
 
 import { CheckCircle2, ChevronRight, MapPin, Search, Warehouse as WarehouseIcon } from 'lucide-react'
+import type { Warehouse } from '@/lib/data'
 import { useRouter } from 'next/navigation'
 import { useMemo, useState } from 'react'
 import { RequireRole } from '@/components/require-role'
 import { TextField } from '@/components/text-field'
 import { TopBar } from '@/components/top-bar'
-import { WAREHOUSES } from '@/lib/data'
 import { normalizeName } from '@/lib/inventory'
 import { useCountStore } from '@/lib/store'
 import { cn } from '@/lib/utils'
@@ -21,13 +21,13 @@ export default function AfiliadoWarehousePage() {
 
 function SelectWarehouse() {
   const router = useRouter()
-  const { session, selectWarehouse, warehouses } = useCountStore()
+  const { session, selectWarehouse, warehouses, warehouses_disponibles } = useCountStore()
   const [query, setQuery] = useState('')
 
   const results = useMemo(() => {
     const q = normalizeName(query)
-    if (!q) return WAREHOUSES
-    return WAREHOUSES.filter((w) =>
+    if (!q) return warehouses_disponibles
+    return warehouses_disponibles.filter((w: Warehouse) =>
       normalizeName(`${w.name} ${w.city} ${w.zone} ${w.id}`).includes(q),
     )
   }, [query])

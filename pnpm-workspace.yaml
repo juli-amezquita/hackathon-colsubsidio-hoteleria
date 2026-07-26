@@ -1,3 +1,8 @@
 packages:
   - 'apps/*'
   - 'packages/*'
+  # El cliente web entra al workspace en su ruta original. Moverlo a `apps/web`
+  # sería más consistente y haría que cada merge desde `front` chocara en los
+  # 45 archivos: la consistencia no vale ese precio mientras el repo tenga dos
+  # personas trabajando en paralelo.
+  - 'frontend'

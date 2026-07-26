@@ -8,7 +8,6 @@ import { RequireRole } from '@/components/require-role'
 import { ReviewCard } from '@/components/review-card'
 import { TopBar } from '@/components/top-bar'
 import { Button } from '@/components/ui-button'
-import { getWarehouse } from '@/lib/data'
 import { orderedEntries } from '@/lib/inventory'
 import { useCountStore, type Review } from '@/lib/store'
 import { cn } from '@/lib/utils'
@@ -23,7 +22,7 @@ export default function AuditorVerifyPage() {
 
 function AuditorVerify() {
   const router = useRouter()
-  const { ready, activeWarehouseId, active, reviewItem } = useCountStore()
+  const { ready, activeWarehouseId, active, reviewItem, getWarehouse } = useCountStore()
 
   const warehouse = getWarehouse(activeWarehouseId)
   const ordered = useMemo(() => (active ? orderedEntries(active.entries) : []), [active])

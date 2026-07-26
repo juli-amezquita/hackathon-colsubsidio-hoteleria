@@ -8,6 +8,40 @@ import { TextField } from '@/components/text-field'
 import { Button } from '@/components/ui-button'
 import { useCountStore } from '@/lib/store'
 
+/**
+ * Los accesos rápidos de la demostración.
+ *
+ * Antes eran `afiliado` / `1234` escritos en el código. Dos problemas: esas
+ * credenciales ya no existen —el servidor autentica por número de documento
+ * contra argon2id— y una contraseña en el bundle es una contraseña publicada,
+ * porque el JavaScript del cliente lo puede leer cualquiera.
+ *
+ * Ahora salen de una variable de entorno con formato `documento:clave` separado
+ * por comas. **Si no está definida, los botones no existen**, que es lo que
+ * debe pasar en producción: no hay forma de olvidarse de quitarlos.
+ *
+ *   NEXT_PUBLIC_ACCESOS_DEMO="1000000001:Clave*,1000000002:Clave*"
+ */
+const ROTULOS = [
+  { role: 'Afiliado', desc: 'Cuenta el inventario' },
+  { role: 'Auditor', desc: 'Verifica el conteo' },
+]
+
+const ACCESOS = (process.env.NEXT_PUBLIC_ACCESOS_DEMO ?? '')
+  .split(',')
+  .map((par) => par.trim())
+  .filter(Boolean)
+  .map((par, i) => {
+    // La clave puede llevar `:`; solo se parte en el primero.
+    const corte = par.indexOf(':')
+    return {
+      usuario: corte === -1 ? par : par.slice(0, corte),
+      clave: corte === -1 ? '' : par.slice(corte + 1),
+      role: ROTULOS[i]?.role ?? `Acceso ${i + 1}`,
+      desc: ROTULOS[i]?.desc ?? '',
+    }
+  })
+
 export default function LoginPage() {
   const router = useRouter()
   const { login, session, ready } = useCountStore()
@@ -31,16 +65,18 @@ export default function LoginPage() {
       return
     }
     setLoading(true)
-    // Pequeña espera para mostrar el estado de carga del botón
-    setTimeout(() => {
-      const result = login(username, password)
+    // Sin espera artificial: el servidor verifica con argon2id, que es caro por
+    // diseño (Principio V) y ya tarda lo suficiente para que el botón se vea.
+    void login(username, password).then((result) => {
       if (!result) {
+        // Mismo mensaje para "no existe" y "clave mala": distinguirlos
+        // permitiría enumerar usuarios probando documentos (OWASP A07).
         setError('Usuario o contraseña incorrectos.')
         setLoading(false)
         return
       }
       router.replace(result.role === 'afiliado' ? '/afiliado' : '/auditor')
-    }, 500)
+    })
   }
 
   return (
@@ -70,7 +106,8 @@ export default function LoginPage() {
 
           <TextField
             label="Usuario"
-            placeholder="afiliado o auditor"
+            inputMode="numeric"
+            placeholder="Número de documento"
             autoCapitalize="none"
             autoComplete="username"
             icon={<User className="h-[18px] w-[18px]" />}
@@ -112,24 +149,21 @@ export default function LoginPage() {
         </form>
 
         {/* Accesos rápidos de demostración */}
-        <div className="mt-4 grid grid-cols-2 gap-3">
-          <DemoCard
-            role="Afiliado"
-            desc="Cuenta el inventario"
-            onClick={() => {
-              setUsername('afiliado')
-              setPassword('1234')
-            }}
-          />
-          <DemoCard
-            role="Auditor"
-            desc="Verifica el conteo"
-            onClick={() => {
-              setUsername('auditor')
-              setPassword('1234')
-            }}
-          />
-        </div>
+        {ACCESOS.length > 0 && (
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            {ACCESOS.map((a) => (
+              <DemoCard
+                key={a.role}
+                role={a.role}
+                desc={a.desc}
+                onClick={() => {
+                  setUsername(a.usuario)
+                  setPassword(a.clave)
+                }}
+              />
+            ))}
+          </div>
+        )}
       </div>
 
       <p className="py-6 text-center text-xs text-muted-foreground">

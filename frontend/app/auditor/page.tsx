@@ -1,12 +1,12 @@
 'use client'
 
 import { AlertTriangle, CheckCircle2, ChevronRight, Inbox, MapPin } from 'lucide-react'
+import type { Warehouse } from '@/lib/data'
 import { useRouter } from 'next/navigation'
 import { useMemo } from 'react'
 import { ProgressBar } from '@/components/progress-bar'
 import { RequireRole } from '@/components/require-role'
 import { TopBar } from '@/components/top-bar'
-import { WAREHOUSES } from '@/lib/data'
 import { progress } from '@/lib/inventory'
 import { useCountStore } from '@/lib/store'
 import { cn } from '@/lib/utils'
@@ -21,11 +21,11 @@ export default function AuditorHomePage() {
 
 function AuditorHome() {
   const router = useRouter()
-  const { warehouses, selectWarehouse, session } = useCountStore()
+  const { warehouses, selectWarehouse, session, warehouses_disponibles } = useCountStore()
 
   const submitted = useMemo(
     () =>
-      WAREHOUSES.map((w) => ({ warehouse: w, count: warehouses[w.id] })).filter(
+      warehouses_disponibles.map((w: Warehouse) => ({ warehouse: w, count: warehouses[w.id] })).filter(
         (x) => x.count?.submitted && x.count.entries.length > 0,
       ),
     [warehouses],

@@ -1,49 +1,73 @@
-export type Unit = 'unidades' | 'cajas' | 'paquetes' | 'bultos' | 'kilos' | 'litros'
+import type { Rol } from '@cci/contracts'
+
+/**
+ * Tipos y utilidades del cliente. **Ya no hay datos aquí.**
+ *
+ * Este archivo tenía doce bodegas inventadas y dos usuarios con contraseña
+ * `1234` en el código. Servían para construir las pantallas sin backend, y el
+ * backend ya existe: las bodegas salen de la sesión —solo las que el usuario
+ * tiene asignadas— y las credenciales las verifica el servidor contra
+ * argon2id.
+ *
+ * Conservar la lista falsa al lado de la real sería la forma más fácil de
+ * demostrar el sistema sobre datos que no son del cliente sin que nadie lo
+ * note.
+ */
+
+/**
+ * Las unidades del catálogo del cliente. **Son estas cuatro.**
+ *
+ * No es una lista de conveniencia: `unidad_medida` tiene exactamente estos
+ * registros y cada artículo declara cuál espera. Contar en otra unidad dispara
+ * alerta en el servidor (FR-2.1), así que ofrecer "cajas" o "bultos" en la
+ * interfaz sería ofrecer un camino que siempre acaba en alerta.
+ */
+export type Unit = 'unidad' | 'kilogramo' | 'litro' | 'porcion'
+
+/** Cómo se llama cada unidad en el catálogo del servidor. */
+export const UNIDAD_DEL_SERVIDOR: Record<Unit, string> = {
+  unidad: 'Unidad',
+  kilogramo: 'Kilogram',
+  litro: 'Liter',
+  porcion: 'Portion',
+}
+
+/** Y al revés, para pintar lo que el servidor devuelve. */
+export function unidadDesdeServidor(nombre: string): Unit {
+  const entrada = Object.entries(UNIDAD_DEL_SERVIDOR).find(([, v]) => v === nombre)
+  return (entrada?.[0] as Unit | undefined) ?? 'unidad'
+}
 
 export interface Warehouse {
   id: string
   name: string
-  city: string
-  zone: string
+  /**
+   * Ciudad y zona: **el cliente no las tiene.**
+   *
+   * Las bodegas reales se llaman `ZOOLOGICO`, `STOCK ALMACEN AYB`,
+   * `STOCK KIOSCO TAQUILLA AYB`. No hay ciudad ni región en el archivo que
+   * entregaron, así que quedan opcionales y la interfaz deja el hueco vacío.
+   * Rellenarlo con "Bogotá" sería inventar un dato del cliente.
+   */
+  city?: string
+  zone?: string
 }
 
 /**
- * Bodegas disponibles. La ruta de conteo NO está predefinida: el afiliado
- * agrega los productos a medida que los va nombrando por voz. Cada bodega
- * guarda su propio conteo por separado.
+ * Los roles, en las dos lenguas.
+ *
+ * `afiliado` es como el equipo llamó al Operador —quien recorre el estante
+ * contando— y se conserva en la interfaz porque es la palabra con la que se
+ * construyeron las pantallas. Hacia el servidor viaja `operador`, que es el
+ * rol que existe de verdad.
  */
-export const WAREHOUSES: Warehouse[] = [
-  { id: 'BOG-CENTRO-04', name: 'Bodega Centro 04', city: 'Bogotá', zone: 'Cundinamarca' },
-  { id: 'BOG-NORTE-11', name: 'Bodega Norte 11', city: 'Bogotá', zone: 'Cundinamarca' },
-  { id: 'BOG-SUR-07', name: 'Bodega Sur 07', city: 'Bogotá', zone: 'Cundinamarca' },
-  { id: 'SOA-CEDI-01', name: 'CEDI Soacha 01', city: 'Soacha', zone: 'Cundinamarca' },
-  { id: 'MED-POBLADO-03', name: 'Bodega Poblado 03', city: 'Medellín', zone: 'Antioquia' },
-  { id: 'MED-ITAGUI-02', name: 'Bodega Itagüí 02', city: 'Itagüí', zone: 'Antioquia' },
-  { id: 'CAL-NORTE-05', name: 'Bodega Norte 05', city: 'Cali', zone: 'Valle del Cauca' },
-  { id: 'CAL-YUMBO-01', name: 'CEDI Yumbo 01', city: 'Yumbo', zone: 'Valle del Cauca' },
-  { id: 'BAQ-CENTRO-02', name: 'Bodega Centro 02', city: 'Barranquilla', zone: 'Atlántico' },
-  { id: 'BUC-CENTRO-01', name: 'Bodega Centro 01', city: 'Bucaramanga', zone: 'Santander' },
-  { id: 'PEI-EJE-01', name: 'CEDI Eje Cafetero 01', city: 'Pereira', zone: 'Risaralda' },
-  { id: 'CTG-BOSQUE-02', name: 'Bodega El Bosque 02', city: 'Cartagena', zone: 'Bolívar' },
-]
+export type Role = 'afiliado' | 'auditor'
 
-export function getWarehouse(id: string | null | undefined) {
-  return WAREHOUSES.find((w) => w.id === id) ?? null
+export const ROL_DEL_SERVIDOR: Record<Role, Rol> = {
+  afiliado: 'operador',
+  auditor: 'auditor',
 }
 
-export const USERS = [
-  {
-    username: 'afiliado',
-    password: '1234',
-    role: 'afiliado' as const,
-    name: 'Carlos Mejía',
-  },
-  {
-    username: 'auditor',
-    password: '1234',
-    role: 'auditor' as const,
-    name: 'Diana Rojas',
-  },
-]
-
-export type Role = 'afiliado' | 'auditor'
+export function rolDesdeServidor(rol: Rol): Role {
+  return rol === 'operador' ? 'afiliado' : 'auditor'
+}

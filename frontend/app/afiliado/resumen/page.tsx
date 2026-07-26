@@ -6,7 +6,6 @@ import { useEffect } from 'react'
 import { RequireRole } from '@/components/require-role'
 import { TopBar } from '@/components/top-bar'
 import { Button } from '@/components/ui-button'
-import { getWarehouse } from '@/lib/data'
 import { formatUnit, orderedEntries, progress } from '@/lib/inventory'
 import { useCountStore } from '@/lib/store'
 import { cn } from '@/lib/utils'
@@ -21,7 +20,7 @@ export default function ResumenPage() {
 
 function Resumen() {
   const router = useRouter()
-  const { ready, activeWarehouseId, active, submitCount, session } = useCountStore()
+  const { ready, activeWarehouseId, active, submitCount, session, getWarehouse } = useCountStore()
 
   const warehouse = getWarehouse(activeWarehouseId)
   const entries = active ? orderedEntries(active.entries) : []

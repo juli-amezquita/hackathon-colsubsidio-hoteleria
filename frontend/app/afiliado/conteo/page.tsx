@@ -24,7 +24,9 @@ import { Button } from '@/components/ui-button'
 import { ValidationDialog, type ValidationAlert } from '@/components/validation-dialog'
 import { VoiceRecorder } from '@/components/voice-recorder'
 import { deleteAudio, saveAudio } from '@/lib/audio-store'
-import { getWarehouse, type Unit } from '@/lib/data'
+import type { ArticuloDeTrabajo } from '@cci/contracts'
+
+import type { Unit, Warehouse } from '@/lib/data'
 import { ANOMALY_MAX, findDuplicate, formatUnit, orderedEntries, progress } from '@/lib/inventory'
 import { useCountStore, type CountEntry } from '@/lib/store'
 import { parseSpeech } from '@/lib/voice'
@@ -42,7 +44,10 @@ type Phase = 'idle' | 'confirm'
 
 function Conteo() {
   const router = useRouter()
-  const { ready, activeWarehouseId, active, addEntry, updateEntry, removeEntry } = useCountStore()
+  const {
+    ready, activeWarehouseId, active, addEntry, updateEntry, removeEntry,
+    getWarehouse, resolver, idDeUnidad, catalogo, pendientes, error: errorSync,
+  } = useCountStore()
 
   const warehouse = getWarehouse(activeWarehouseId)
   const entries = useMemo(() => (active ? orderedEntries(active.entries) : []), [active])
@@ -50,10 +55,14 @@ function Conteo() {
   const [phase, setPhase] = useState<Phase>('idle')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [name, setName] = useState('')
+  // Cuando el catálogo no resuelve solo, se muestran candidatos: el sistema
+  // no elige en caso de duda, pregunta (FR-1.27).
+  const [noResuelto, setNoResuelto] = useState<ArticuloDeTrabajo[] | null>(null)
   const [quantity, setQuantity] = useState(0)
-  const [unit, setUnit] = useState<Unit>('unidades')
+  const [unit, setUnit] = useState<Unit>('unidad')
   const [transcript, setTranscript] = useState('')
   const [unclear, setUnclear] = useState(false)
+  const [unitError, setUnitError] = useState<string | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
 
   const nameRef = useRef<HTMLInputElement | null>(null)
@@ -75,7 +84,8 @@ function Conteo() {
   function resetForm() {
     setName('')
     setQuantity(0)
-    setUnit('unidades')
+    setUnit('unidad')
+    setUnitError(null)
     setTranscript('')
     setUnclear(false)
     setEditingId(null)
@@ -88,7 +98,7 @@ function Conteo() {
     setTranscript(text)
     setName(parsed.name)
     setQuantity(parsed.quantity ?? 0)
-    setUnit(parsed.unit ?? 'unidades')
+    setUnit(parsed.unit ?? 'unidad')
     setUnclear(parsed.needsReview)
     setEditingId(null)
     setPhase('confirm')
@@ -151,13 +161,39 @@ function Conteo() {
       audioId = (await saveAudio(blob)) ?? undefined
     }
 
+    // El nombre dictado se resuelve contra el catálogo CACHEADO de la bodega,
+    // sin red (F-21b): si dependiera del servidor, un microcorte impediría
+    // contar, no solo enviar. El servidor vuelve a resolverlo al recibirlo y es
+    // la autoridad; si difiere, marca el registro para el Auditor en vez de
+    // corregirlo en silencio (FR-6.9).
+    const resuelto = resolver(name.trim())
+
+    if (!resuelto.articulo) {
+      setNoResuelto(resuelto.candidatos)
+      return
+    }
+
+    // La unidad viaja como el id del catálogo, resuelto AQUÍ y no al enviar:
+    // el envío puede ocurrir horas después, con otra bodega abierta. Y se
+    // resuelve la unidad ELEGIDA, no la que el artículo espera — mandar
+    // siempre la esperada apagaría la alerta de unidad (FR-2.1) para siempre.
+    const unidadId = idDeUnidad(unit)
+    if (!unidadId) {
+      setUnitError(`Esta bodega no maneja ${formatUnit(2, unit)}.`)
+      return
+    }
+
     const payload: Partial<Omit<CountEntry, 'id' | 'order'>> = {
-      name: name.trim(),
+      articuloId: resuelto.articulo.articuloId,
+      // Se guarda el nombre DEL CATÁLOGO, no el que se dictó: es el que el
+      // Auditor va a leer y el que viaja al sistema central.
+      name: resuelto.articulo.nombre,
       quantity,
       unit,
+      unidadId,
       isAnomaly: anomaly,
       isDuplicate: Boolean(duplicate),
-      needsReview: unclear,
+      needsReview: unclear || resuelto.candidatos.length > 0,
       transcript,
     }
 
@@ -171,7 +207,7 @@ function Conteo() {
       updateEntry(editingId, payload)
     } else {
       if (audioId) payload.audioId = audioId
-      addEntry(payload as Omit<CountEntry, 'id' | 'order' | 'capturedAt'>)
+      addEntry(payload as Parameters<typeof addEntry>[0])
     }
     resetForm()
     setPhase('idle')
@@ -302,7 +338,20 @@ function Conteo() {
             </div>
 
             <p className="mb-1.5 block text-sm font-semibold text-foreground">Unidad</p>
-            <UnitSelect value={unit} onChange={(u) => { setUnit(u); setUnclear(false) }} />
+            <UnitSelect
+              value={unit}
+              onChange={(u) => {
+                setUnit(u)
+                setUnclear(false)
+                setUnitError(null)
+              }}
+            />
+            {unitError && (
+              <p className="mt-1.5 flex items-start gap-1.5 text-sm text-destructive">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                {unitError}
+              </p>
+            )}
 
             <div className="mt-5 flex flex-col gap-2">
               <Button size="block" onClick={handleAdd} disabled={!name.trim() || quantity <= 0}>

@@ -15,7 +15,6 @@ import { useEffect, useMemo, useState } from 'react'
 import { RequireRole } from '@/components/require-role'
 import { TopBar } from '@/components/top-bar'
 import { Button } from '@/components/ui-button'
-import { getWarehouse } from '@/lib/data'
 import { buildCsv, buildReportRows, downloadCsv } from '@/lib/export'
 import { formatUnit } from '@/lib/inventory'
 import { useCountStore } from '@/lib/store'
@@ -31,7 +30,7 @@ export default function AuditorReportPage() {
 
 function AuditorReport() {
   const router = useRouter()
-  const { ready, activeWarehouseId, active, clearWarehouse } = useCountStore()
+  const { ready, activeWarehouseId, active, clearWarehouse, getWarehouse } = useCountStore()
   const [downloaded, setDownloaded] = useState(false)
 
   const warehouse = getWarehouse(activeWarehouseId)

@@ -1,176 +1,77 @@
-import type { Unit } from '@/lib/data'
+import { parsear } from '@cci/gramatica'
 
-const UNIT_KEYWORDS: Record<string, Unit> = {
-  unidad: 'unidades',
-  unidades: 'unidades',
-  und: 'unidades',
-  caja: 'cajas',
-  cajas: 'cajas',
-  paquete: 'paquetes',
-  paquetes: 'paquetes',
-  paca: 'paquetes',
-  pacas: 'paquetes',
-  bulto: 'bultos',
-  bultos: 'bultos',
-  saco: 'bultos',
-  sacos: 'bultos',
-  kilo: 'kilos',
-  kilos: 'kilos',
-  kg: 'kilos',
-  litro: 'litros',
-  litros: 'litros',
-  lt: 'litros',
-}
+import { unidadDesdeServidor, type Unit } from '@/lib/data'
 
-const NUMBER_WORDS: Record<string, number> = {
-  cero: 0,
-  un: 1,
-  uno: 1,
-  una: 1,
-  dos: 2,
-  tres: 3,
-  cuatro: 4,
-  cinco: 5,
-  seis: 6,
-  siete: 7,
-  ocho: 8,
-  nueve: 9,
-  diez: 10,
-  once: 11,
-  doce: 12,
-  trece: 13,
-  catorce: 14,
-  quince: 15,
-  dieciseis: 16,
-  diecisiete: 17,
-  dieciocho: 18,
-  diecinueve: 19,
-  veinte: 20,
-  veintiuno: 21,
-  veintidos: 22,
-  veintitres: 23,
-  veinticuatro: 24,
-  veinticinco: 25,
-  treinta: 30,
-  cuarenta: 40,
-  cincuenta: 50,
-  sesenta: 60,
-  setenta: 70,
-  ochenta: 80,
-  noventa: 90,
-  cien: 100,
-  ciento: 100,
-  doscientos: 200,
-  trescientos: 300,
-  cuatrocientos: 400,
-  quinientos: 500,
-  seiscientos: 600,
-  setecientos: 700,
-  ochocientos: 800,
-  novecientos: 900,
-  mil: 1000,
-}
-
-// Palabras de relleno que no forman parte del nombre del producto.
-const FILLER_WORDS = new Set(['de', 'del', 'la', 'el', 'los', 'las', 'y', 'con', 'hay', 'son'])
-
-function normalize(text: string) {
-  return text
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-function wordsToNumber(tokens: string[]): number | null {
-  let total = 0
-  let current = 0
-  let matched = false
-  for (const t of tokens) {
-    if (!(t in NUMBER_WORDS) && t !== 'y') return matched ? total + current : null
-    if (t === 'y') continue
-    matched = true
-    const val = NUMBER_WORDS[t]
-    if (val === 1000) {
-      current = current === 0 ? 1000 : current * 1000
-      total += current
-      current = 0
-    } else {
-      current += val
-    }
-  }
-  return matched ? total + current : null
-}
-
-function titleCase(text: string) {
-  return text
-    .split(' ')
-    .filter(Boolean)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ')
-}
+/**
+ * Interpretación del dictado. **Ahora usa la gramática real del sistema.**
+ *
+ * Este archivo tenía su propio diccionario de números en español y sus propias
+ * unidades —`cajas`, `bultos`, `pacas`—. Funcionaba, pero era una segunda
+ * implementación de la misma regla, y dos gramáticas divergen: la del
+ * dispositivo aceptaba "dos cajas de arroz" y el servidor rechazaría esa
+ * unidad, con el operario sin entender por qué.
+ *
+ * `@cci/gramatica` es la MISMA que corre en el servidor —mismo paquete, mismas
+ * 32 pruebas—, y por eso el dispositivo puede resolver sin red sabiendo que el
+ * servidor va a concluir lo mismo (F-21b, FR-2.5).
+ *
+ * Lo que se gana además de la coherencia:
+ *
+ *   · **Las fracciones verbales se rechazan.** "Medio bulto" no es una
+ *     cantidad, es una estimación, y un inventario no se cuenta estimando.
+ *     Antes se aceptaba en silencio.
+ *   · **Las unidades no soportadas se nombran.** Si alguien dice "gramos", no
+ *     se convierten por cuenta propia a kilos —convertir en silencio es como
+ *     se pierde un factor de mil— sino que se dice.
+ *   · **`nombreLlevaCantidad`** avisa cuando el nombre termina en algo que
+ *     parece cifra. El catálogo real tiene `ACEITE DE OLIVA 10ML /BOLS`: ahí
+ *     "10 ml" es parte del nombre, no lo que el operario contó.
+ */
 
 export interface ParsedSpeech {
   name: string
   quantity: number | null
   unit: Unit | null
-  /** El audio no se entendió bien: falta nombre, cantidad o unidad. */
+  /** El sistema no lo resolvió solo: hay que confirmarlo en pantalla. */
   needsReview: boolean
+  /** Por qué no se resolvió, en palabras para el operario. */
+  reason: string | null
 }
 
-/**
- * Extrae nombre + cantidad + unidad de una sola frase, por ejemplo
- * "arroz blanco cincuenta paquetes" -> { name: "Arroz Blanco", quantity: 50, unit: "paquetes" }.
- */
+const MOTIVOS: Record<string, string> = {
+  fraccion_verbal:
+    'Dijo una fracción ("medio", "un cuarto"). Un inventario necesita una cantidad exacta.',
+  sin_cantidad: 'No se entendió la cantidad. Dígala otra vez o escríbala.',
+  sin_nombre: 'No se entendió el nombre del producto.',
+  unidad_no_soportada:
+    'Esa unidad no está en el catálogo. Use unidades, kilogramos, litros o porciones.',
+  vacio: 'No se escuchó nada.',
+}
+
 export function parseSpeech(transcript: string): ParsedSpeech {
-  const norm = normalize(transcript)
-  const tokens = norm.split(' ').filter(Boolean)
+  const r = parsear(transcript)
 
-  // 1) Cantidad como dígitos
-  let quantity: number | null = null
-  const digitMatch = norm.match(/\d+/)
-  if (digitMatch) {
-    quantity = Number.parseInt(digitMatch[0], 10)
-  } else {
-    let best: number | null = null
-    let run: string[] = []
-    const flush = () => {
-      if (run.length) {
-        const n = wordsToNumber(run)
-        if (n !== null) best = n
-      }
-      run = []
-    }
-    for (const t of tokens) {
-      if (t in NUMBER_WORDS || t === 'y') run.push(t)
-      else flush()
-    }
-    flush()
-    quantity = best
-  }
-
-  // 2) Unidad
-  let unit: Unit | null = null
-  for (const t of tokens) {
-    if (t in UNIT_KEYWORDS) {
-      unit = UNIT_KEYWORDS[t]
-      break
+  if (!r.ok) {
+    return {
+      // Se conserva lo dictado: el operario corrige sobre lo que dijo, no
+      // sobre una pantalla en blanco.
+      name: transcript.trim(),
+      quantity: null,
+      unit: null,
+      needsReview: true,
+      reason: r.detalle ?? MOTIVOS[r.motivo] ?? 'No se entendió el dictado.',
     }
   }
 
-  // 3) Nombre = tokens que no son número, unidad ni relleno
-  const nameTokens = tokens.filter(
-    (t) =>
-      !/^\d+$/.test(t) &&
-      !(t in NUMBER_WORDS) &&
-      !(t in UNIT_KEYWORDS) &&
-      !FILLER_WORDS.has(t),
-  )
-  const name = titleCase(nameTokens.join(' '))
-
-  const needsReview = !name || quantity === null || unit === null
-
-  return { name, quantity, unit, needsReview }
+  return {
+    name: r.nombre,
+    quantity: r.cantidad,
+    unit: unidadDesdeServidor(r.unidad),
+    // Si el nombre termina en algo que parece cantidad, la gramática no puede
+    // decidirlo sola: lo decide la persona mirando el catálogo.
+    needsReview: r.nombreLlevaCantidad,
+    reason: r.nombreLlevaCantidad
+      ? 'El nombre termina en una cifra. Confirme si es parte del producto o la cantidad.'
+      : null,
+  }
 }
