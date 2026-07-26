@@ -81,7 +81,20 @@ Restricciones: `UNIQUE (ronda_id, articulo_id, secuencia)` · `CHECK (estado <> 
 
 **`reconteo`** — registro del Auditor (FR-4.x): `articulo_id` o `producto_fantasma_id`, `auditor_id`, `secuencia`, `cantidad`, `unidad_id`, `codigo_razon_id`, `modo_captura`, sellos y clave de idempotencia. Mismo mecanismo de supersedencia.
 
-**`cierre_inventario`** — `bodega_id`, `cerrado_en`, `cerrado_por`, `hash_consolidado`.
+**`cierre_inventario`** — `id` PK · `bodega_id` · `periodo date` · `cerrado_en` · `cerrado_por` · `hash_consolidado`.
+
+El cierre es **mensual**, no único. La primera versión tenía `bodega_id` como clave primaria, de modo que una bodega solo podía cerrarse una vez en la vida del sistema y el mes siguiente devolvía `INVENTARIO_YA_CERRADO` para siempre. Desde la migración 0016 la clave es `id` y lo único que se sigue impidiendo es el doble cierre del **mismo** mes: `UNIQUE (bodega_id, periodo)`. El `periodo` se trunca en hora de Colombia, no en UTC — un cierre del 31 de enero a las 20:00 en Bogotá es el 1 de febrero en UTC, y archivarlo en febrero dejaría enero sin cierre justo en los cierres de fin de mes, que son todos.
+
+**`consolidado_historico`** — la foto del consolidado en el instante del aval (0016). `articulo_consolidado` es una proyección viva: mirarla el 3 de febrero dice qué se concluiría hoy, no qué se avaló el 31 de enero. Para comparar meses hace falta algo que no se recalcule. Es append-only como el resto del libro (`REVOKE UPDATE, DELETE`), y **desnormaliza a propósito** nombre, código y unidad: si alguien renombra un artículo dentro de seis meses, el informe de enero debe seguir diciendo cómo se llamaba en enero.
+
+| Columna | Notas |
+|---|---|
+| `id` PK · `cierre_id` FK · `bodega_id` · `periodo` | la foto pertenece a un cierre |
+| `articulo_id` \| `fantasma_id` | `CHECK` de que hay al menos uno |
+| `codigo`, `nombre`, `unidad` | congelados |
+| `clasificacion`, `motivo`, `origen_valor`, `codigo_razon_id`, `rondas_afirmando` | lo que se concluyó |
+| `cantidad_final`, `saldo_sistema`, `diferencia` | `diferencia` es `NULL` si falta alguno de los dos: un `NULL` dice «no se puede saber», un `0` diría «cuadra» |
+| `costo_unitario`, `valor_ajuste` | el costo de **ese** mes, no el de hoy |
 
 **`outbox`** — `id`, `tipo_evento`, `payload jsonb`, `ocurrido_en`, `despachado_en NULL`. Escrito **en la misma transacción** que su causa (Principio IV).
 
@@ -89,7 +102,9 @@ Restricciones: `UNIQUE (ronda_id, articulo_id, secuencia)` · `CHECK (estado <> 
 
 ### 2.2 Referencia — mutable, administrada
 
-`usuario` (con `hash_password` argon2id), `rol`, `bodega`, `unidad_medida` (con `es_peso boolean`), `articulo` (nombre, código opcional, unidad esperada, índice GIN `pg_trgm`), **`articulo_alias`** (`bodega_id`, `articulo_id`, `alias_normalizado` — cómo llama la gente al artículo, que rara vez es como lo llama el ERP; D-19), `saldo_esperado` (bodega × artículo — **nunca sale del servidor**), `codigo_razon` (catálogo controlado, R4), `configuracion_merma` + `configuracion_merma_historial` (FR-8.3/8.5).
+`usuario` (con `hash_password` argon2id), `rol`, `bodega`, **`usuario_bodega`** (qué bodegas tiene asignadas cada persona — es lo que consulta `platform/autorizacion/bodega.guard.ts`: el rol correcto ya no basta, la bodega también tiene que estar asignada), `unidad_medida` (con `es_peso boolean`), `articulo` (**por bodega**: nombre, código opcional, unidad esperada, índice GIN `pg_trgm`), **`articulo_alias`** (`bodega_id`, `articulo_id`, `alias_normalizado` — cómo llama la gente al artículo, que rara vez es como lo llama el ERP; D-19), `saldo_esperado` (bodega × artículo — **nunca sale del servidor**), `codigo_razon` (catálogo controlado, R4), `configuracion_merma` + `configuracion_merma_historial` (FR-8.3/8.5), **`costo_articulo`** (bodega × artículo → `costo_unitario`, `moneda`, `fuente`, `vigente_desde`).
+
+⚠️ **`costo_articulo` nace vacía y así sigue.** El archivo que entregó el cliente (`bodegas-y-stock.xlsx`) trae cantidad, unidad y código; **no trae precio**. Mientras no se cargue desde el ERP, el tablero informa el ajuste en **unidades** y declara cuántas referencias tienen costo cargado, en lugar de sumar ceros y llamarlo un total. Es la diferencia entre «no lo sabemos» y «vale cero pesos» (Principio IX).
 
 **Esta es la "tabla madre" de D8.** `articulo` y `saldo_esperado` son **solo de lectura para el flujo de conteo**: ningún registro de Operador las modifica. Se actualizan únicamente al cerrar el inventario con el aval del Auditor (FR-7.9).
 
@@ -117,7 +132,8 @@ Restricciones: `UNIQUE (ronda_id, articulo_id, secuencia)` · `CHECK (estado <> 
 -- La inmutabilidad se impone donde no se puede eludir por descuido
 REVOKE UPDATE, DELETE ON
   ronda, ronda_cierre, registro_conteo, producto_fantasma,
-  reconteo, cierre_inventario, evidencia_audio
+  reconteo, cierre_inventario, evidencia_audio,
+  consolidado_historico          -- la foto del mes no se retoca (0016)
 FROM app_role;
 
 -- Un artículo no se concilia sin que alguna ronda haya afirmado una cantidad,
@@ -151,6 +167,13 @@ Cada migración es un par `NNNN_nombre.up.sql` / `.down.sql`. **Ninguna se acept
 | 0008 | Auditoría: `codigo_razon`, `reconteo`, `cierre_inventario` | `DROP TABLE` |
 | 0009 | Merma: configuración + historial | `DROP TABLE` |
 | 0010 | Integración: exportación y envío al ERP | `DROP TABLE` |
+| 0011 | Fantasmas: lo que el catálogo propuso antes del hallazgo | `DROP COLUMN` |
+| 0012 | Resolución del nombre viajando con el conteo (FR-6.9) | `DROP COLUMN` / `DROP VIEW` |
+| 0013 | Alias aprobados: quién los aprobó y cuándo | `DROP COLUMN` |
+| 0014 | Modo consulta del Supervisor: rol y contador de minutos (D-10) | `DROP TABLE` |
+| 0015 | Propuestas de mejora con estado (aprobada/rechazada) | `DROP TABLE` |
+| 0016 | **Periodos**: cierre mensual, `consolidado_historico`, `costo_articulo` | `DROP TABLE` / restaurar PK por bodega |
+| 0017 | Unicidad de `discrepancia` por artículo + índices de ruta caliente | `DROP INDEX` |
 
 **Reglas de reversibilidad** (Restricción 6):
 
@@ -173,6 +196,10 @@ Cada migración es un par `NNNN_nombre.up.sql` / `.down.sql`. **Ninguna se acept
 | `articulo_alias (bodega_id, alias_normalizado)` GIN `gin_trgm_ops` | Resolución del nombre dictado — **ruta caliente de cada turno** (D-05, D-19) |
 | `outbox (despachado_en) WHERE despachado_en IS NULL` | Despacho de eventos, índice parcial |
 | `saldo_esperado (bodega_id, articulo_id)` | Validación en servidor (FR-2.2) |
+| `discrepancia (bodega_id, articulo_id)` UNIQUE `WHERE articulo_id IS NOT NULL` | **Una discrepancia por artículo, garantizada por el motor** (0017). El servicio la abría con un `INSERT … WHERE NOT EXISTS` —comprobar y luego actuar, en dos pasos, bajo `READ COMMITTED`— y el despachador del outbox corre en varias réplicas: dos reproyectando la misma bodega pasaban las dos la comprobación. El artículo salía duplicado en el CSV que firma el Auditor y se enviaba dos veces al ERP |
+| `registro_conteo (articulo_id)` | Abrir un caso del Auditor sin recorrer el libro entero (0017) |
+| `cierre_inventario (periodo DESC, bodega_id)` | Cierres del mes en el tablero (0016) |
+| `consolidado_historico (periodo DESC, bodega_id)` · `(bodega_id, periodo DESC)` · `(codigo, periodo)` | Las tres consultas del tablero: por periodo, por bodega y por artículo en el tiempo (0016) |
 
 ---
 
