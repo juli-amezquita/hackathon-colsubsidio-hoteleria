@@ -1,5 +1,6 @@
 'use client'
 
+import { enNotacionColombiana } from '@cci/gramatica'
 import { Minus, Plus } from 'lucide-react'
 import { forwardRef } from 'react'
 import { cn } from '@/lib/utils'
@@ -50,15 +51,25 @@ export const QuantityField = forwardRef<
         placeholder="0"
         value={mostrado}
         onChange={(e) => {
-          // Se acepta coma o punto: en Colombia el decimal se escribe con coma
-          // y el teclado del teléfono da la coma.
-          const limpio = e.target.value.replace(/[^\d.,]/g, '').replace(',', '.')
-          if (limpio === '') {
+          // Notación colombiana: punto de miles, coma decimal.
+          //
+          // Antes se hacía `.replace(',', '.')` y `parseFloat`, que deja los
+          // puntos intactos: escribir **1.500** servilletas registraba **1,5**.
+          // Un error de mil veces, sin alerta local (el aviso solo mira > 1000)
+          // y con el servidor devolviendo una discrepancia que por diseño no
+          // dice hacia dónde — así que el operario no tenía cómo deducirlo.
+          //
+          // La regla vive en `@cci/gramatica` para que el número tecleado y el
+          // dictado se lean igual. Dos copias divergirían.
+          const bruto = e.target.value.replace(/[^\d.,]/g, '')
+          if (bruto === '') {
             set(0)
             return
           }
-          const n = Number.parseFloat(limpio)
-          if (Number.isFinite(n)) set(n)
+          const n = enNotacionColombiana(bruto)
+          // `null` mientras se escribe algo a medias ("1,"): se ignora la
+          // pulsación en vez de saltar a 0 y perder lo ya escrito.
+          if (n !== null) set(n)
         }}
         aria-invalid={invalid}
         className="min-w-0 flex-1 bg-transparent text-center font-display text-2xl font-extrabold text-foreground outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"

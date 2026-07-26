@@ -110,7 +110,49 @@ function leerHasta999(
 }
 
 /**
- * Lee un número desde el inicio de las palabras: dígitos ("20", "19.8") o
+ * Un número escrito como se escribe en Colombia: punto de miles, coma decimal.
+ *
+ * Esto era un error de MIL VECES. La expresión anterior trataba el punto como
+ * separador decimal, así que `1.500` —mil quinientas servilletas, tecleado o
+ * transcrito tal cual por cualquier dictado en español— se leía como **1,5**.
+ * Y salía con `ok: true`, o sea que el sistema no preguntaba nada: registraba
+ * 1,5 unidades donde había 1.500 y el operario no tenía forma de corregirlo
+ * repitiendo la frase, porque el resultado era siempre el mismo.
+ *
+ * Las reglas, en orden:
+ *   · con los dos separadores, manda el ÚLTIMO — `1.500,25` → 1500.25
+ *   · solo coma → decimal — `19,8` → 19.8
+ *   · solo punto seguido de EXACTAMENTE tres dígitos → miles — `1.500` → 1500
+ *   · solo punto con otra cantidad de dígitos → decimal — `19.8` → 19.8
+ *
+ * La tercera es la única discutible: `19.800` podría ser 19,8 kg escrito con
+ * ceros de más. Se resuelve como 19.800 porque quien escribe decimales en
+ * Colombia usa coma, y porque el caso que rompía el inventario era el otro.
+ */
+export function enNotacionColombiana(bruto: string): number | null {
+  const punto = bruto.lastIndexOf('.');
+  const coma = bruto.lastIndexOf(',');
+
+  let limpio: string;
+  if (punto !== -1 && coma !== -1) {
+    const decimal = Math.max(punto, coma);
+    limpio = `${bruto.slice(0, decimal).replace(/[.,]/g, '')}.${bruto.slice(decimal + 1)}`;
+  } else if (coma !== -1) {
+    limpio = `${bruto.slice(0, coma).replace(/[.,]/g, '')}.${bruto.slice(coma + 1)}`;
+  } else if (punto !== -1) {
+    const cola = bruto.slice(punto + 1);
+    limpio = cola.length === 3 ? bruto.replace(/\./g, '') : `${bruto.slice(0, punto).replace(/\./g, '')}.${cola}`;
+  } else {
+    limpio = bruto;
+  }
+
+  if (!/^\d+(\.\d+)?$/.test(limpio)) return null;
+  const n = Number(limpio);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Lee un número desde el inicio de las palabras: dígitos ("20", "1.500") o
  * cardinales en español, con decimales por "punto", "coma" o "con".
  */
 export function leerNumero(palabras: readonly string[]): ResultadoNumero {
@@ -122,13 +164,13 @@ export function leerNumero(palabras: readonly string[]): ResultadoNumero {
   let entero: number;
   let i: number;
 
-  // Dígitos: "20", "19.8", "19,8"
-  const digitos = /^(\d+)(?:[.,](\d+))?$/.exec(primera);
+  // Dígitos: "20", "19,8", "1.500", "1.500,25"
+  const digitos = /^(\d[\d.,]*)$/.exec(primera);
   if (digitos) {
-    entero = Number(digitos[1]);
-    if (digitos[2] !== undefined) {
-      return { ok: true, valor: Number(`${digitos[1]!}.${digitos[2]}`), consumidos: 1 };
-    }
+    const leido = enNotacionColombiana(digitos[1]!);
+    if (leido === null) return { ok: false, motivo: 'no_es_numero' };
+    if (!Number.isInteger(leido)) return { ok: true, valor: leido, consumidos: 1 };
+    entero = leido;
     i = 1;
   } else {
     const c = cardinal(palabras);
