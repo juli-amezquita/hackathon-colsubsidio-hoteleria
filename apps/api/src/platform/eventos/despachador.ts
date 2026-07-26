@@ -31,11 +31,38 @@ export class DespachadorOutbox {
     private readonly consumidores: readonly Consumidor[],
     private readonly intervaloMs = 1000,
     private readonly lote = 50,
+    /**
+     * Qué hacer con una pasada fallida. Por defecto, dejarla en el log.
+     *
+     * Es un parámetro y no un `console.error` fijo para que las pruebas puedan
+     * comprobar que el fallo se reporta —un despachador que se traga los
+     * errores en silencio es indistinguible de uno que no tiene trabajo—.
+     */
+    private readonly alFallar: (e: Error) => void = (e) => {
+      console.error('[outbox] pasada fallida, se reintenta:', e.message);
+    },
   ) {}
 
   iniciar(): void {
     if (this.temporizador) return;
-    this.temporizador = setInterval(() => void this.pasada(), this.intervaloMs);
+
+    // El fallo se traga AQUÍ, y es deliberado.
+    //
+    // Esto corre en un temporizador, sin nadie esperando la promesa. Un `void`
+    // pelado convierte cualquier rechazo —un corte de red al ERP, un reinicio
+    // de la base— en un `unhandledRejection`, y Node responde a eso matando el
+    // proceso. Es decir: la garantía de arriba, "si algo falla el evento vuelve
+    // en la siguiente pasada", no se cumpliría, porque no habría siguiente
+    // pasada.
+    //
+    // Con el `catch`, la transacción se descarta, el evento sigue sin marcar y
+    // la pasada de dentro de un segundo lo reintenta. Que es exactamente lo que
+    // el outbox promete.
+    this.temporizador = setInterval(() => {
+      this.pasada().catch((e: unknown) => {
+        this.alFallar(e instanceof Error ? e : new Error(String(e)));
+      });
+    }, this.intervaloMs);
     this.temporizador.unref();
   }
 

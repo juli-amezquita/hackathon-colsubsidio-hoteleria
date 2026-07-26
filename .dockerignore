@@ -6,7 +6,10 @@
 .github
 .specify
 specs
+# La infraestructura no entra en la imagen, salvo el reparto de rutas de
+# nginx: la instancia lo saca de aquí para que vaya atado a la misma etiqueta.
 infra
+!infra/nginx.conf
 tests
 *.md
 .env

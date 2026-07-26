@@ -142,6 +142,51 @@ describe('F-10/F-11/F-12 · outbox y despacho', () => {
     expect(p?.n).toBe(0);
   });
 
+  it('una pasada fallida en el temporizador NO tumba el proceso', async () => {
+    // La garantía del outbox es "si algo falla, vuelve en la siguiente pasada".
+    // Eso exige que haya siguiente pasada.
+    //
+    // El temporizador corre sin nadie esperando la promesa, así que un rechazo
+    // sin capturar es un `unhandledRejection`, y Node responde a eso matando el
+    // proceso: un corte de red al ERP dejaría la API abajo y el outbox sin
+    // vaciar. La prueba mira que el fallo se reporte y que el despachador siga
+    // trabajando después.
+    await sql.begin((trx) => bus.publicar(trx, eventoDePrueba(bodegaId, articuloId)));
+
+    let intentos = 0;
+    const inestable: Consumidor = {
+      nombre: 'consumidor-inestable',
+      interesadoEn: ['ConteoRegistrado'],
+      manejar: (_trx, evento) => {
+        if (!esMio(evento, bodegaId)) return Promise.resolve();
+        intentos += 1;
+        // Falla la primera vez, funciona la segunda: es la forma de un corte
+        // de red, no la de un error de programación.
+        return intentos === 1 ? Promise.reject(new Error('corte de red')) : Promise.resolve();
+      },
+    };
+
+    const fallos: Error[] = [];
+    const d = new DespachadorOutbox(sql, [inestable], 20, 50, (e) => fallos.push(e));
+
+    d.iniciar();
+    // Se espera a que haya fallado y reintentado. Con 20 ms de intervalo, 400 ms
+    // dan margen de sobra sin volver la prueba lenta.
+    await new Promise((r) => setTimeout(r, 400));
+    d.detener();
+
+    // Falló, se reportó —no se lo tragó en silencio— y volvió a intentarlo.
+    expect(fallos.length).toBeGreaterThanOrEqual(1);
+    expect(fallos[0]?.message).toMatch(/corte de red/);
+    expect(intentos).toBeGreaterThanOrEqual(2);
+
+    // Y el segundo intento sí lo despachó.
+    const [f] = await sql<{ n: number }[]>`
+      SELECT count(*)::int n FROM outbox
+      WHERE despachado_en IS NULL AND payload->>'bodegaId' = ${bodegaId}`;
+    expect(f?.n).toBe(0);
+  });
+
   it('entregado dos veces, el efecto ocurre UNA sola vez', async () => {
     await sql.begin((trx) => bus.publicar(trx, eventoDePrueba(bodegaId, articuloId)));
 

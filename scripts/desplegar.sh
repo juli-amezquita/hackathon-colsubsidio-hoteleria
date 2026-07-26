@@ -23,10 +23,21 @@ SUCIO=$(git status --porcelain | wc -l | tr -d ' ')
 [ "$SUCIO" != "0" ] && SHA="$SHA-sucio-$(date +%H%M%S)"
 IMAGEN="$REPO:$SHA"
 
+# Los botones de acceso rápido solo existen si se piden explícitamente:
+#
+#   ACCESOS_DEMO="1000000001:LaClave,1000000002:LaClave" ./scripts/desplegar.sh
+#
+# Lo que se pase acaba escrito en el JavaScript que descarga cualquiera. Es una
+# contraseña publicada; para la demostración vale, para el cliente no.
+ACCESOS_DEMO="${ACCESOS_DEMO:-}"
+[ -n "$ACCESOS_DEMO" ] && echo "⚠️  Se incrustan accesos de demostración en la página"
+
 echo "▸ Construyendo $IMAGEN (linux/arm64)"
 aws ecr get-login-password --region "$REGION" \
   | docker login --username AWS --password-stdin "${REPO%%/*}"
-docker buildx build --platform linux/arm64 -t "$IMAGEN" --push .
+docker buildx build --platform linux/arm64 \
+  --build-arg ACCESOS_DEMO="$ACCESOS_DEMO" \
+  -t "$IMAGEN" --push .
 
 echo "▸ Publicando la versión en SSM"
 aws ssm put-parameter --name "$PREFIJO/IMAGEN_API" --type String \
@@ -52,9 +63,14 @@ for _ in $(seq 1 60); do
   esac
 done
 
-# Se verifica por CloudFront, no contra el origen: el puerto 3000 lo filtran
-# muchas redes corporativas y un 403 del filtro no dice nada del despliegue.
+# Se verifica por CloudFront, que es por donde entra la gente. El origen no se
+# comprueba directamente: solo acepta conexiones desde los bordes del CDN.
 URL=$(terraform -chdir="$TF" output -raw endpoint_api)
 echo "▸ Verificando $URL"
+
+# Las dos mitades, porque el reparto de nginx es lo único que puede romperse sin
+# que ninguna de las dos aplicaciones se entere.
 curl -fsS --retry 10 --retry-delay 3 "$URL/salud" && echo
+curl -fsS -o /dev/null --retry 5 --retry-delay 3 "$URL/" && echo "  las pantallas responden"
+
 echo "✓ $IMAGEN en producción"

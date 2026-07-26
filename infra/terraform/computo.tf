@@ -117,6 +117,20 @@ resource "aws_instance" "backend" {
   iam_instance_profile   = aws_iam_instance_profile.backend.name
   user_data              = local.user_data
 
+  # Cambiar el arranque REEMPLAZA la instancia, y tiene que ser así.
+  #
+  # Por defecto, Terraform aplica un `user_data` nuevo parando y arrancando la
+  # máquina. Parece suficiente y no lo es: cloud-init ejecuta el user_data **una
+  # sola vez en la vida de la instancia**, así que un reinicio no lo vuelve a
+  # correr. El resultado es una instancia que Terraform da por actualizada y que
+  # por dentro sigue con el script de arranque anterior — la peor forma de
+  # divergencia, porque el estado dice que todo está al día.
+  #
+  # Reemplazarla es barato aquí: no hay nada en su disco. La base está en RDS,
+  # la caché en ElastiCache, la evidencia en S3 y la aplicación se baja de ECR
+  # al arrancar. La IP tampoco cambia: el EIP se reasocia sola.
+  user_data_replace_on_change = true
+
   root_block_device {
     volume_size = 20
     volume_type = "gp3"

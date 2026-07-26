@@ -1,43 +1,31 @@
 # --------------------------------------------------------------------------
-# CloudFront delante de la API
+# CloudFront delante de la instancia
 #
-# Resuelve dos cosas a la vez:
+# Resuelve dos cosas y ninguna es rendimiento:
 #
 #   1. TLS. El Principio V exige que todo dato de inventario viaje cifrado, y
-#      una PWA con Service Worker necesita contexto seguro. CloudFront da un
-#      certificado válido en *.cloudfront.net sin tener que comprar dominio.
+#      una aplicación con Service Worker necesita contexto seguro. CloudFront da
+#      un certificado válido en *.cloudfront.net sin comprar dominio.
 #   2. Puerto 443. Muchas redes corporativas —incluida la del equipo— filtran
-#      puertos no estándar; el origen sigue en 3000, pero nadie lo ve.
+#      puertos no estándar. El origen es el 80 de nginx, pero nadie lo ve.
 #
-# La caché va DESACTIVADA en las rutas de la API a propósito: esto es un
-# inventario, y servir una respuesta cacheada sería servir un conteo viejo. El
-# PWA sí se cachea: son archivos con hash en el nombre.
+# ## Un solo origen
 #
-# ⚠️ El PWA se sirve desde AQUÍ y no desde otro alojamiento porque la cookie de
-# sesión es `SameSite=Strict`. Ver `pwa.tf`.
+# Antes eran dos: la instancia para la API y un bucket de S3 para las pantallas,
+# con una lista de rutas aquí decidiendo cuál atendía cada petición. Ese reparto
+# vive ahora en nginx, dentro de la instancia (`infra/nginx.conf`).
+#
+# El motivo es que la lista estaba en el sitio equivocado. Un cambio de rutas
+# obligaba a un `terraform apply` y a esperar a que la distribución se propagara
+# —quince minutos— para algo que no es infraestructura sino enrutado de la
+# aplicación. Peor: durante esa espera, la ruta nueva devolvía el HTML de las
+# pantallas con **código 200**. Ahora el reparto viaja en la misma imagen que el
+# código que lo cumple y cambia en el mismo despliegue.
+#
+# La caché va DESACTIVADA por defecto a propósito: esto es un inventario, y
+# servir una respuesta guardada sería servir un conteo viejo. Lo único que se
+# cachea es `/_next/static`, que lleva hash en el nombre.
 # --------------------------------------------------------------------------
-
-# Las rutas de la API, en un solo sitio.
-#
-# Salen de los `@Controller` del backend, y una prueba verifica que esta lista
-# no se quede atrás (`test/rutas-cdn.spec.ts`). Sin esa prueba, añadir un
-# controlador y olvidarse de esta lista haría que la ruta nueva devolviera el
-# `index.html` del PWA — un fallo raro de diagnosticar, porque responde 200.
-locals {
-  rutas_api = [
-    "administracion",
-    "aprendizaje",
-    "auditoria",
-    "bodegas",
-    "consulta",
-    "integracion",
-    "rondas",
-    "salud",
-    "sesion",
-    "tiempo",
-    "voz",
-  ]
-}
 
 data "aws_cloudfront_cache_policy" "sin_cache" {
   name = "Managed-CachingDisabled"
@@ -61,11 +49,11 @@ resource "aws_cloudfront_distribution" "api" {
   is_ipv6_enabled = true
 
   origin {
-    origin_id   = "api"
+    origin_id   = "instancia"
     domain_name = aws_eip.backend[0].public_dns
 
     custom_origin_config {
-      http_port              = 3000
+      http_port              = 80
       https_port             = 443
       origin_protocol_policy = "http-only" # el tramo CloudFront→origen va dentro de AWS
       origin_ssl_protocols   = ["TLSv1.2"]
@@ -73,18 +61,31 @@ resource "aws_cloudfront_distribution" "api" {
     }
   }
 
-  origin {
-    origin_id                = "pwa"
-    domain_name              = aws_s3_bucket.pwa.bucket_regional_domain_name
-    origin_access_control_id = aws_cloudfront_origin_access_control.pwa.id
+  # Sin caché y sin métodos recortados: aquí pasa TODO, y quien decide es nginx.
+  #
+  # `allowed_methods` incluye los de escritura porque el mismo comportamiento
+  # atiende `POST /rondas` y `GET /`. Dejar fuera POST daría un 403 de CloudFront
+  # —no del backend— sobre cada conteo.
+  default_cache_behavior {
+    target_origin_id       = "instancia"
+    viewer_protocol_policy = "redirect-to-https"
+
+    allowed_methods = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
+    cached_methods  = ["GET", "HEAD"]
+
+    cache_policy_id          = data.aws_cloudfront_cache_policy.sin_cache.id
+    origin_request_policy_id = data.aws_cloudfront_origin_request_policy.todo_menos_host.id
+
+    compress = true
   }
 
-  # Por defecto: el PWA. La API es la excepción enumerada, no al revés — su
-  # superficie está en el código y se puede listar; la del PWA no.
-  default_root_object = "index.html"
-
-  default_cache_behavior {
-    target_origin_id       = "pwa"
+  # Lo único que se cachea: los estáticos de Next, que llevan hash en el nombre
+  # y por tanto son inmutables. Es lo que hace que la pantalla abra rápido con
+  # señal mala, y es también lo que descarga a la instancia — una t4g pequeña no
+  # debería estar sirviendo el mismo JavaScript cien veces.
+  ordered_cache_behavior {
+    path_pattern           = "/_next/static/*"
+    target_origin_id       = "instancia"
     viewer_protocol_policy = "redirect-to-https"
 
     allowed_methods = ["GET", "HEAD", "OPTIONS"]
@@ -92,37 +93,6 @@ resource "aws_cloudfront_distribution" "api" {
 
     cache_policy_id = data.aws_cloudfront_cache_policy.optimizado.id
     compress        = true
-  }
-
-  # Una ruta del cliente —`/ronda/abc`— no existe como objeto en S3. Sin esto,
-  # recargar la página en cualquier pantalla que no sea la raíz daría 403.
-  dynamic "custom_error_response" {
-    for_each = [403, 404]
-
-    content {
-      error_code            = custom_error_response.value
-      response_code         = 200
-      response_page_path    = "/index.html"
-      error_caching_min_ttl = 0
-    }
-  }
-
-  dynamic "ordered_cache_behavior" {
-    for_each = local.rutas_api
-
-    content {
-      path_pattern           = "/${ordered_cache_behavior.value}*"
-      target_origin_id       = "api"
-      viewer_protocol_policy = "redirect-to-https"
-
-      allowed_methods = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
-      cached_methods  = ["GET", "HEAD"]
-
-      cache_policy_id          = data.aws_cloudfront_cache_policy.sin_cache.id
-      origin_request_policy_id = data.aws_cloudfront_origin_request_policy.todo_menos_host.id
-
-      compress = true
-    }
   }
 
   restrictions {

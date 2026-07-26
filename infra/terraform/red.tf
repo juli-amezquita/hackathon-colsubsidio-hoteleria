@@ -74,18 +74,25 @@ resource "aws_security_group" "backend" {
   tags = { Name = "${local.nombre}-backend" }
 }
 
-# Sin ALB (MVP): CloudFront es el que termina TLS y este es su origen.
-# El puerto 3000 queda abierto porque CloudFront no tiene rango de IPs fijo que
-# valga la pena mantener a mano; el tráfico real va siempre por HTTPS a través
-# de la distribución, y el Principio V se cumple ahí.
-resource "aws_vpc_security_group_ingress_rule" "backend_api" {
+# Sin ALB (MVP): CloudFront termina TLS y este es su origen.
+#
+# La puerta es nginx en el 80, y solo la abre CloudFront. AWS publica la lista
+# de rangos que usan sus servidores de borde para hablar con orígenes y la
+# mantiene al día sola: usarla es más seguro que `0.0.0.0/0` y no cuesta
+# mantenimiento. El 3000 y el 3001 ya no se exponen — viven dentro de la red de
+# Docker, donde solo los alcanza nginx.
+data "aws_ec2_managed_prefix_list" "cloudfront_origen" {
+  name = "com.amazonaws.global.cloudfront.origin-facing"
+}
+
+resource "aws_vpc_security_group_ingress_rule" "backend_http" {
   count = var.habilitar_escalado ? 0 : 1
 
   security_group_id = aws_security_group.backend.id
-  description       = "API (origen de CloudFront)"
-  cidr_ipv4         = "0.0.0.0/0"
-  from_port         = 3000
-  to_port           = 3000
+  description       = "nginx (solo desde los bordes de CloudFront)"
+  prefix_list_id    = data.aws_ec2_managed_prefix_list.cloudfront_origen.id
+  from_port         = 80
+  to_port           = 80
   ip_protocol       = "tcp"
 }
 

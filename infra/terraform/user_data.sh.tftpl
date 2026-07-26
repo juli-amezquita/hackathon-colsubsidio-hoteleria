@@ -75,13 +75,19 @@ docker run --rm --env-file /opt/cci/.env "$IMAGEN" node dist/scripts/migrar.js u
 # ON CONFLICT DO NOTHING, así que repetirlo no pisa nada de lo ya cargado.
 docker run --rm --env-file /opt/cci/.env "$IMAGEN" node dist/scripts/semillas.js
 
+# El reparto de rutas de nginx sale de la MISMA imagen, no de un archivo que
+# alguien dejó en la instancia hace tres despliegues.
+docker run --rm --entrypoint cat "$IMAGEN" /app/nginx.conf > /opt/cci/nginx.conf
+
 cat > /opt/cci/docker-compose.yml <<EOF
 services:
   api:
     image: $IMAGEN
     restart: always
     env_file: /opt/cci/.env
-    ports: ['3000:3000']
+    # Sin \`ports\`: solo nginx le habla. El 3000 dejó de estar expuesto al
+    # mundo cuando nginx pasó a ser la puerta de entrada.
+    expose: ['3000']
     logging:
       driver: json-file
       options: { max-size: '20m', max-file: '5' }
@@ -91,10 +97,62 @@ services:
       timeout: 5s
       retries: 4
       start_period: 20s
+
+  # Las pantallas. Misma imagen, otro proceso: el frontend y la API que sirve
+  # sus datos salen siempre del mismo commit.
+  web:
+    image: $IMAGEN
+    restart: always
+    command: ['node','/app/web/frontend/server.js']
+    environment:
+      NODE_ENV: production
+      PORT: '3001'
+      HOSTNAME: '0.0.0.0'
+    expose: ['3001']
+    logging:
+      driver: json-file
+      options: { max-size: '20m', max-file: '5' }
+    healthcheck:
+      test: ['CMD','node','-e',"fetch('http://localhost:3001/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 15s
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: always
+    ports: ['80:80']
+    volumes:
+      - /opt/cci/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    # Arranca DESPUÉS de que las dos respondan. Sin esto, nginx resuelve los
+    # nombres al arrancar, no los encuentra y muere en bucle.
+    depends_on:
+      api: { condition: service_healthy }
+      web: { condition: service_healthy }
+    logging:
+      driver: json-file
+      options: { max-size: '20m', max-file: '5' }
 EOF
 
 cd /opt/cci
 docker compose up -d --remove-orphans
+
+# Se comprueba por nginx —la puerta real— y no contra la API directamente: que
+# la API responda no dice nada sobre si el reparto de rutas quedó bien.
+for i in $(seq 1 30); do
+  if curl -fsS -o /dev/null http://localhost/salud; then
+    echo "nginx reparte bien: /salud llega a la API"
+    break
+  fi
+  [ "$i" = "30" ] && { echo "nginx no responde en /salud" >&2; exit 1; }
+  sleep 2
+done
+
+curl -fsS -o /dev/null http://localhost/ \
+  && echo "nginx reparte bien: / llega a las pantallas" \
+  || { echo "las pantallas no responden por nginx" >&2; exit 1; }
+
 docker image prune -f
 echo "Desplegado: $IMAGEN"
 SCRIPT

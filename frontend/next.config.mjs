@@ -25,6 +25,10 @@ const API = process.env.API_INTERNA ?? 'http://127.0.0.1:3000'
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Empaqueta el servidor con solo las dependencias que traza. En la imagen
+  // pesa ~100 MB en vez de arrastrar el `node_modules` del monorepo entero.
+  output: 'standalone',
+  outputFileTracingRoot: new URL('..', import.meta.url).pathname,
   // ⚠️ NO se ignoran los errores de tipos.
   //
   // Venía en `true`, que es lo razonable mientras las pantallas se construyen
