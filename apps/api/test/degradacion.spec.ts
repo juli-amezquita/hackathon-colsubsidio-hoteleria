@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import { ArbitroAnthropic } from '../src/proveedores/arbitraje/anthropic';
@@ -132,5 +135,51 @@ describe('lo que la degradación NO puede tocar', () => {
     ).toBe('conciliado');
 
     expect(evaluarDescripcion('Caja de galletas Festival sabor vainilla x 12').aceptada).toBe(true);
+  });
+});
+
+describe('el agente de voz nunca filtra la clave de cuenta (D-07-A)', () => {
+  /**
+   * La prueba que más importa de este archivo, y la que menos se ve.
+   *
+   * El descuido que evita no aparece en ninguna pantalla: si el adaptador
+   * devolviera `config().GEMINI_API_KEY` en vez del token efímero, todo
+   * funcionaría igual de bien y cualquier supervisor tendría nuestra cuota de
+   * Gemini entera en el devtools — y en capa de pago, nuestra factura.
+   */
+  it('el adaptador de Gemini no puede devolver la clave de cuenta', async () => {
+    const { AgenteGeminiLive } = await import('../src/proveedores/agente-voz/gemini');
+    const fuente = readFileSync(
+      join(__dirname, '..', 'src', 'proveedores', 'agente-voz', 'gemini.ts'),
+      'utf8',
+    );
+
+    // Se miran las líneas de CÓDIGO del retorno, sin comentarios: el comentario
+    // de ahí dice literalmente "jamás config().GEMINI_API_KEY" y haría pasar o
+    // fallar la prueba por lo que está escrito en prosa, no por lo que corre.
+    const retorno = fuente
+      .slice(fuente.indexOf('return {'))
+      .split('\n')
+      .filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*'))
+      .join('\n');
+
+    expect(retorno).not.toMatch(/GEMINI_API_KEY|config\(\)/);
+    expect(retorno).toMatch(/token: datos\.name/);
+
+    // Y no se puede encender mientras el token efímero no autentique.
+    expect(new AgenteGeminiLive().verificado).toBe(false);
+  });
+
+  it('ningún adaptador sin verificar puede emitir credencial', async () => {
+    const { AgenteGrok } = await import('../src/proveedores/agente-voz/grok');
+    const { AgenteGeminiLive } = await import('../src/proveedores/agente-voz/gemini');
+    const { AgenteSimulado } = await import('../src/proveedores/agente-voz/simulado');
+
+    // El simulado es el único verificado, y por eso es el que corre. No es un
+    // parche de pruebas: es el proveedor de producción mientras los otros dos
+    // tengan algo sin confirmar.
+    expect(new AgenteSimulado().verificado).toBe(true);
+    expect(new AgenteGrok().verificado).toBe(false);
+    expect(new AgenteGeminiLive().verificado).toBe(false);
   });
 });

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 
 import { LecturaModule } from '../../composicion/lectura.module';
 import { config } from '../../config';
+import { AgenteGeminiLive } from '../../proveedores/agente-voz/gemini';
 import { AgenteGrok } from '../../proveedores/agente-voz/grok';
 import { PROVEEDOR_AGENTE_VOZ } from '../../proveedores/agente-voz/proveedor';
 import { AgenteSimulado } from '../../proveedores/agente-voz/simulado';
@@ -19,6 +20,25 @@ import { ConsultaService } from './consulta.service';
  * simulado — no como parche, sino porque la tarifa de D-10 no está verificada
  * (H9-03) y la consulta por texto responde exactamente lo mismo.
  */
+/**
+ * El adaptador conversacional, elegido en el arranque.
+ *
+ * `gemini` es el único con endpoint y tarifa verificados contra la API real
+ * —Grok viene del brief— pero los tres pasan por la misma puerta: si el
+ * proveedor no está `verificado`, el controlador se niega a emitir credencial
+ * y ofrece la consulta por texto, que responde exactamente lo mismo.
+ */
+function elegirAgente() {
+  switch (config().PROVEEDOR_AGENTE_VOZ) {
+    case 'gemini':
+      return AgenteGeminiLive;
+    case 'grok':
+      return AgenteGrok;
+    default:
+      return AgenteSimulado;
+  }
+}
+
 @Module({
   imports: [LecturaModule],
   controllers: [ConsultaController],
@@ -26,7 +46,7 @@ import { ConsultaService } from './consulta.service';
     ConsultaService,
     {
       provide: PROVEEDOR_AGENTE_VOZ,
-      useClass: config().PROVEEDOR_AGENTE_VOZ === 'grok' ? AgenteGrok : AgenteSimulado,
+      useClass: elegirAgente(),
     },
   ],
 })

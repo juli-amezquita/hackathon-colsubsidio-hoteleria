@@ -17,7 +17,7 @@
 export interface CredencialDeAgente {
   readonly token: string;
   readonly expiraEn: string;
-  readonly proveedor: 'grok' | 'simulado';
+  readonly proveedor: 'grok' | 'gemini-live' | 'simulado';
   readonly endpoint: string;
   /** Instrucciones y herramientas que el agente puede usar. Solo lectura. */
   readonly configuracion: Readonly<Record<string, unknown>>;
