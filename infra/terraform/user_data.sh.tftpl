@@ -139,6 +139,15 @@ EOF
 cd /opt/cci
 docker compose up -d --remove-orphans
 
+# nginx se reinicia SIEMPRE, aunque su imagen no cambie.
+#
+# `up -d` solo recrea lo que cambió, así que al desplegar una versión nueva de
+# la aplicación nginx sobrevive intacto… apuntando a contenedores que ya no
+# existen. Resuelve los nombres de los upstream UNA vez, al arrancar, y se
+# queda con esas direcciones: el resultado es un 502 en todo, con la API sana
+# al lado. Costó un despliegue entero descubrirlo.
+docker compose restart nginx
+
 # Se comprueba por nginx —la puerta real— y no contra la API directamente: que
 # la API responda no dice nada sobre si el reparto de rutas quedó bien.
 for i in $(seq 1 30); do
