@@ -47,6 +47,7 @@ function Conteo() {
   const {
     ready, activeWarehouseId, active, addEntry, updateEntry, removeEntry,
     getWarehouse, resolver, idDeUnidad, catalogo, pendientes, error: errorSync,
+    reportarHallazgo, alertasSinResponder, sostenerConteo,
   } = useCountStore()
 
   const warehouse = getWarehouse(activeWarehouseId)
@@ -284,6 +285,23 @@ function Conteo() {
               <AgentePanel
                 rondaId={active.rondaId}
                 onConfirmar={confirmarPorVoz}
+                onHallazgo={(i) =>
+                  void reportarHallazgo({
+                    nombre: i.nombre,
+                    cantidad: i.cantidad,
+                    unidad: i.unidad,
+                  })
+                }
+                onSostener={(registroId) => {
+                  const e = entries.find((x) => x.registroId === registroId)
+                  if (e) sostenerConteo(e.id)
+                }}
+                alertas={alertasSinResponder.map((e) => ({
+                  registroId: e.registroId ?? e.id,
+                  articuloId: e.articuloId,
+                  nombre: e.name,
+                  cantidad: e.quantity,
+                }))}
                 onEscribir={startManual}
               />
             ) : (

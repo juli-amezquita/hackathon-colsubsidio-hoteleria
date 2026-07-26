@@ -80,6 +80,8 @@ export interface CountEntry {
   estadoEnvio: EstadoEnvio
   /** `null` mientras no haya llegado el acuse: guardado ≠ validado (FR-6.5). */
   validacion: string | null
+  /** El operario ya respondió a la alerta de este registro (FR-2.4). */
+  alertaRespondida?: boolean
   registroId?: string
   error?: string
 }
@@ -136,6 +138,18 @@ interface CountContextValue extends CountState {
   idDeUnidad: (u: Unit) => string | null
   updateEntry: (id: string, patch: Partial<Omit<CountEntry, 'id' | 'order'>>) => void
   removeEntry: (id: string) => void
+  /** Hallazgo físico sin correspondencia en el catálogo (Historia 5, FR-5.x). */
+  reportarHallazgo: (h: { nombre: string; cantidad: number; unidad: string | null }) => Promise<void>
+  /**
+   * Alertas que el servidor devolvió y el operario todavía no respondió.
+   *
+   * Son las que bloquean el cierre. Antes no se exponían y el resultado era el
+   * peor posible: la pantalla decía "sin alertas", el botón de enviar no hacía
+   * nada, y el motivo estaba en un `error` que ninguna pantalla pintaba.
+   */
+  alertasSinResponder: CountEntry[]
+  /** El operario sostiene su conteo pese a la alerta (FR-2.4). */
+  sostenerConteo: (entryId: string) => void
   submitCount: () => Promise<void>
   reopenCount: () => void
   reviewItem: (warehouseId: string, entryId: string, review: Review) => Promise<void>
@@ -250,7 +264,11 @@ export function CountProvider({ children }: { children: ReactNode }) {
               unidadId: e.unidadId,
               textoDictado: e.transcript || null,
               confirmaCorreccion: e.isDuplicate,
-              confirmaPeseAAlerta: e.isAnomaly,
+              // `alertaRespondida` es lo que el operario contestó cuando el
+              // servidor marcó discrepancia. Sin esto el registro se reenvía
+              // igual y la alerta vuelve a quedar sin responder — que es lo que
+              // bloqueaba el cierre.
+              confirmaPeseAAlerta: e.isAnomaly || e.alertaRespondida === true,
               claveIdempotencia: e.clave,
             })
             marcar(bodegaId, e.id, {
@@ -572,6 +590,60 @@ export function CountProvider({ children }: { children: ReactNode }) {
     [state.warehouses, idDeUnidad],
   )
 
+  /**
+   * Un hallazgo: algo que está en el estante y no en el catálogo.
+   *
+   * No se encola como los conteos porque no lo es — no tiene `articuloId` y no
+   * puede compararse con ningún saldo. Va directo, y si la red falla se avisa:
+   * inventarle una cola aparte por un caso que ocurre unas pocas veces por
+   * ronda sería complejidad que nadie va a mantener.
+   */
+  const reportarHallazgo = useCallback<CountContextValue['reportarHallazgo']>(
+    async (h) => {
+      const id = state.activeWarehouseId
+      const wh = id ? state.warehouses[id] : null
+      if (!wh?.rondaId) return
+      try {
+        await api.reportarFantasma(wh.rondaId, {
+          descripcion: h.nombre,
+          unidadObservada: h.unidad ?? 'Unidad',
+          cantidad: h.cantidad,
+          confirmaNoEsDelCatalogo: true,
+        })
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'No se pudo anotar el hallazgo.')
+      }
+    },
+    [state.activeWarehouseId, state.warehouses],
+  )
+
+  const alertasSinResponder = useMemo(() => {
+    const id = state.activeWarehouseId
+    const wh = id ? state.warehouses[id] : null
+    return (wh?.entries ?? []).filter(
+      (e) =>
+        e.estadoEnvio === 'enviado' &&
+        e.validacion?.startsWith('alerta') === true &&
+        e.alertaRespondida !== true,
+    )
+  }, [state.activeWarehouseId, state.warehouses])
+
+  const sostenerConteo = useCallback(
+    (entryId: string) => {
+      const id = state.activeWarehouseId
+      if (!id) return
+      // Reenvía con clave NUEVA y `confirmaPeseAAlerta`: es otra afirmación del
+      // operario, no una edición de la anterior. Las dos quedan en la traza.
+      marcar(id, entryId, {
+        alertaRespondida: true,
+        clave: api.nuevaClave(),
+        estadoEnvio: 'pendiente',
+        validacion: null,
+      })
+    },
+    [state.activeWarehouseId, marcar],
+  )
+
   const clearWarehouse = useCallback((id: string) => {
     setState((s) => {
       const next = { ...s.warehouses }
@@ -612,6 +684,9 @@ export function CountProvider({ children }: { children: ReactNode }) {
       selectWarehouse,
       resolver,
       idDeUnidad,
+      reportarHallazgo,
+      alertasSinResponder,
+      sostenerConteo,
       addEntry,
       updateEntry,
       removeEntry,
@@ -622,7 +697,7 @@ export function CountProvider({ children }: { children: ReactNode }) {
     }),
     [
       state, active, catalogo, pendientes, error, ready, getWarehouse, login, logout,
-      selectWarehouse, resolver, idDeUnidad, addEntry, updateEntry, removeEntry, submitCount,
+      selectWarehouse, resolver, idDeUnidad, reportarHallazgo, alertasSinResponder, sostenerConteo, addEntry, updateEntry, removeEntry, submitCount,
       reopenCount, reviewItem, clearWarehouse,
     ],
   )

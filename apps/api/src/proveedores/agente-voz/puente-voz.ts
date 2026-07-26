@@ -108,6 +108,7 @@ export class PuenteDeVoz implements OnApplicationShutdown {
       alRecibirAudio: (pcm) => {
         if (ws.readyState === ws.OPEN) ws.send(pcm, { binary: true });
       },
+      alAvisar: (mensaje) => enviar(ws, { tipo: 'aviso', mensaje }),
       alCerrar: (motivo) => {
         enviar(ws, { tipo: 'error', mensaje: `La voz se desconectó: ${motivo}` });
         if (ws.readyState === ws.OPEN) ws.close();
@@ -136,13 +137,19 @@ export class PuenteDeVoz implements OnApplicationShutdown {
       gemini.decir(accion.texto);
       enviar(ws, { tipo: 'dice', texto: accion.texto });
 
+      // El puente NO escribe en la base. Manda lo confirmado al dispositivo,
+      // que lo mete en su cola con clave de idempotencia — el mismo camino que
+      // un conteo escrito a mano (F-18). Si aquí se guardara directo, un conteo
+      // por voz y uno por texto tomarían caminos distintos y solo uno
+      // sobreviviría a un corte de red.
       if (accion.tipo === 'registrar') {
-        // El puente NO escribe en la base. Manda el ítem confirmado al
-        // dispositivo, que lo mete en su cola con clave de idempotencia — el
-        // mismo camino que un conteo escrito a mano (F-18). Si aquí se guardara
-        // directo, un conteo por voz y uno por texto tomarían caminos distintos
-        // y solo uno sobreviviría a un corte de red.
         enviar(ws, { tipo: 'registrar', item: accion.item satisfies ItemEnCurso });
+      }
+      if (accion.tipo === 'registrar_hallazgo') {
+        enviar(ws, { tipo: 'hallazgo', item: accion.item satisfies ItemEnCurso });
+      }
+      if (accion.tipo === 'sostener') {
+        enviar(ws, { tipo: 'sostener', registroId: accion.registroId });
       }
     };
 
@@ -161,10 +168,43 @@ export class PuenteDeVoz implements OnApplicationShutdown {
       }
       // Los marcos de texto son control, no audio.
       try {
-        const m = JSON.parse(datos.toString()) as { tipo?: string; texto?: string };
+        const m = JSON.parse(datos.toString()) as {
+          tipo?: string;
+          texto?: string;
+          registroId?: string;
+          articuloId?: string;
+          nombre?: string;
+          cantidad?: number;
+        };
         // Paridad voz/texto (FR-1.6): lo escrito recorre exactamente el mismo
         // diálogo que lo dictado, confirmación hablada incluida.
         if (m.tipo === 'texto' && m.texto) void turno(m.texto);
+
+        // El dispositivo avisa de una alerta que llegó DESPUÉS de confirmar.
+        //
+        // Es el punto que faltaba y el que dejaba el inventario sin poder
+        // cerrar: el servidor marcaba discrepancia, el operario ya iba en el
+        // siguiente artículo y nadie se lo decía. Al cerrar la ronda aparecía un
+        // bloqueo que él no sabía que existía.
+        //
+        // Lo que se le dice es que NO cuadra. Nunca en qué dirección ni por
+        // cuánto: eso convertiría el conteo ciego en un conteo guiado (FR-2.2).
+        if (m.tipo === 'alerta' && m.registroId && m.nombre) {
+          fase = {
+            tipo: 'resolviendo_alerta',
+            registroId: m.registroId,
+            item: {
+              articuloId: m.articuloId ?? null,
+              nombre: m.nombre,
+              cantidad: m.cantidad ?? 0,
+              unidad: null,
+              dictado: '',
+            },
+          };
+          const texto = `Ojo: ${m.nombre} no cuadra con lo que el sistema tiene. ¿Sostienes tu conteo o lo vuelves a contar?`;
+          gemini.decir(texto);
+          enviar(ws, { tipo: 'dice', texto });
+        }
       } catch {
         /* marco inválido: se ignora en vez de tumbar la sesión */
       }

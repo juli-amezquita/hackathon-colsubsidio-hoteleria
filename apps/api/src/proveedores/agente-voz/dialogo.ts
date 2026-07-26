@@ -26,7 +26,19 @@ import { parsear, type ResultadoParse } from '@cci/gramatica';
 export type Fase =
   | { readonly tipo: 'esperando' }
   | { readonly tipo: 'confirmando'; readonly item: ItemEnCurso }
-  | { readonly tipo: 'eligiendo'; readonly candidatos: readonly Candidato[]; readonly item: ItemEnCurso };
+  | { readonly tipo: 'eligiendo'; readonly candidatos: readonly Candidato[]; readonly item: ItemEnCurso }
+  /**
+   * Se dictó algo que el catálogo no tiene. Historia 5: no se descarta, se
+   * ofrece registrarlo como HALLAZGO.
+   *
+   * Es una fase propia y no un `confirmando` con bandera porque lo que se
+   * confirma es distinto: aquí el operario no está diciendo "sí, son diez", está
+   * diciendo "sí, esto existe y no está en tu lista". Un producto fantasma es
+   * una afirmación sobre el catálogo, no sobre una cantidad.
+   */
+  | { readonly tipo: 'ofreciendo_hallazgo'; readonly item: ItemEnCurso }
+  /** Alerta de discrepancia sin responder. Sin ella no se puede cerrar (FR-2.4). */
+  | { readonly tipo: 'resolviendo_alerta'; readonly item: ItemEnCurso; readonly registroId: string };
 
 export interface Candidato {
   readonly articuloId: string;
@@ -45,6 +57,10 @@ export interface ItemEnCurso {
 export type Accion =
   | { readonly tipo: 'hablar'; readonly texto: string }
   | { readonly tipo: 'registrar'; readonly item: ItemEnCurso; readonly texto: string }
+  /** Producto físico sin correspondencia en el catálogo (Historia 5, FR-5.x). */
+  | { readonly tipo: 'registrar_hallazgo'; readonly item: ItemEnCurso; readonly texto: string }
+  /** El operario sostiene su conteo pese a la alerta (FR-2.4). */
+  | { readonly tipo: 'sostener'; readonly registroId: string; readonly texto: string }
   | { readonly tipo: 'callar' };
 
 /** Lo que el operario dice para aceptar. Cerrado a propósito. */
@@ -60,6 +76,27 @@ const NIEGA = new Set([
 ]);
 
 const CANCELA = new Set(['cancelar', 'olvidalo', 'olvídalo', 'déjalo', 'dejalo']);
+
+/**
+ * Cómo pide un operario que algo quede como hallazgo.
+ *
+ * El sistema ya lo ofrecía —"repítelo o regístralo como hallazgo"— y no sabía
+ * recibir la respuesta: el operario decía "márcalo como hallazgo" y el agente
+ * lo trataba como un dictado nuevo. Ofrecer algo que uno no sabe aceptar es
+ * peor que no ofrecerlo.
+ *
+ * Se busca por SUBCADENA y no por igualdad porque esto se dice de muchas
+ * formas: "márcalo como hallazgo", "regístralo", "sí, es un hallazgo",
+ * "producto nuevo".
+ */
+const PIDE_HALLAZGO = [
+  'hallazgo', 'fantasma', 'no esta en la lista', 'no está en la lista',
+  'producto nuevo', 'registralo', 'regístralo', 'marcalo', 'márcalo',
+];
+
+function pideHallazgo(dicho: string): boolean {
+  return PIDE_HALLAZGO.some((p) => dicho.includes(limpio(p)));
+}
 
 function limpio(t: string): string {
   return t
@@ -145,6 +182,49 @@ export async function avanzar(
     return interpretarDictado(dictado, resolver, 'El anterior no quedó. ');
   }
 
+  // ── Se le ofreció registrarlo como hallazgo ──────────────────────────────
+  if (fase.tipo === 'ofreciendo_hallazgo') {
+    if (AFIRMA.has(dicho) || pideHallazgo(dicho)) {
+      return {
+        fase: { tipo: 'esperando' },
+        accion: {
+          tipo: 'registrar_hallazgo',
+          item: fase.item,
+          texto: `Anotado como hallazgo: ${fase.item.nombre}. Lo revisa el auditor.`,
+        },
+      };
+    }
+    if (NIEGA.has(dicho) || CANCELA.has(dicho)) {
+      return { fase: { tipo: 'esperando' }, accion: { tipo: 'hablar', texto: 'Listo, no lo anoto. Sigue.' } };
+    }
+    return interpretarDictado(dictado, resolver);
+  }
+
+  // ── Hay una alerta sin responder ─────────────────────────────────────────
+  //
+  // El operario decide: sostiene su conteo o lo vuelve a contar. Lo que NO se
+  // le dice es en qué dirección falla ni por cuánto (FR-2.2) — decírselo
+  // convertiría el conteo ciego en un conteo guiado.
+  if (fase.tipo === 'resolviendo_alerta') {
+    if (AFIRMA.has(dicho) || dicho.includes('sostengo') || dicho.includes('seguro')) {
+      return {
+        fase: { tipo: 'esperando' },
+        accion: {
+          tipo: 'sostener',
+          registroId: fase.registroId,
+          texto: `Queda tu conteo de ${fase.item.nombre}. El auditor lo revisa.`,
+        },
+      };
+    }
+    if (NIEGA.has(dicho) || dicho.includes('cuento') || dicho.includes('contar')) {
+      return {
+        fase: { tipo: 'esperando' },
+        accion: { tipo: 'hablar', texto: `Listo, cuenta ${fase.item.nombre} otra vez y dímelo.` },
+      };
+    }
+    return interpretarDictado(dictado, resolver);
+  }
+
   // ── Estaba eligiendo entre candidatos ────────────────────────────────────
   if (fase.tipo === 'eligiendo') {
     const elegido = porOrdinal(dicho, fase.candidatos) ?? porNombre(dicho, fase.candidatos);
@@ -189,9 +269,16 @@ async function interpretarDictado(
 
   if (!articulo) {
     if (candidatos.length === 0) {
+      // Se OFRECE y se queda esperando la respuesta. Antes se ofrecía y se
+      // volvía a 'esperando': el operario decía "márcalo como hallazgo" y el
+      // agente lo interpretaba como un producto llamado "márcalo como
+      // hallazgo". Ofrecer algo que uno no sabe recibir es peor que callarse.
       return {
-        fase: { tipo: 'esperando' },
-        accion: { tipo: 'hablar', texto: `${prefijo}No encuentro ${r.nombre} en esta bodega. Repítelo o regístralo como hallazgo.` },
+        fase: { tipo: 'ofreciendo_hallazgo', item },
+        accion: {
+          tipo: 'hablar',
+          texto: `${prefijo}No encuentro ${r.nombre} en el catálogo de esta bodega. ¿Lo anoto como hallazgo para el auditor?`,
+        },
       };
     }
     // Duda: se pregunta. El sistema NO elige por puntaje (FR-1.27).

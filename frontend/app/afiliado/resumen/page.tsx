@@ -2,7 +2,7 @@
 
 import { AlertTriangle, CheckCircle2, Copy, HelpCircle, Send } from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { RequireRole } from '@/components/require-role'
 import { TopBar } from '@/components/top-bar'
 import { Button } from '@/components/ui-button'
@@ -20,7 +20,11 @@ export default function ResumenPage() {
 
 function Resumen() {
   const router = useRouter()
-  const { ready, activeWarehouseId, active, submitCount, session, getWarehouse } = useCountStore()
+  const {
+    ready, activeWarehouseId, active, submitCount, session, getWarehouse,
+    error, pendientes, alertasSinResponder, sostenerConteo,
+  } = useCountStore()
+  const [enviando, setEnviando] = useState(false)
 
   const warehouse = getWarehouse(activeWarehouseId)
   const entries = active ? orderedEntries(active.entries) : []
@@ -136,9 +140,65 @@ function Resumen() {
 
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-card/95 backdrop-blur">
         <div className="mx-auto max-w-md px-4 py-3">
-          <Button size="block" onClick={() => submitCount()} disabled={total === 0}>
+          {/* Lo que impide cerrar, ANTES de que se toque el botón.
+              El fallo que esto arregla: el servidor devolvía un bloqueo, la
+              tienda lo guardaba en `error`, esta pantalla no lo pintaba, y el
+              botón parecía roto. Un botón que no hace nada y no dice por qué es
+              peor que un botón deshabilitado. */}
+          {alertasSinResponder.length > 0 && (
+            <div className="mb-3 rounded-xl border-2 border-warning-border bg-warning/10 p-3">
+              <p className="flex items-start gap-1.5 text-sm font-semibold text-warning-foreground">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                {alertasSinResponder.length === 1
+                  ? 'Un conteo no cuadra con lo que el sistema tiene.'
+                  : `${alertasSinResponder.length} conteos no cuadran con lo que el sistema tiene.`}
+              </p>
+              {/* No se dice en qué dirección ni por cuánto: eso convertiría el
+                  conteo ciego en un conteo guiado (FR-2.2). */}
+              <p className="mt-1 text-xs text-muted-foreground">
+                Sostén tu conteo o vuelve a contarlo. Sin responder no se puede enviar.
+              </p>
+              <ul className="mt-2 space-y-1.5">
+                {alertasSinResponder.map((e) => (
+                  <li key={e.id} className="flex items-center justify-between gap-2">
+                    <span className="truncate text-sm font-medium text-foreground">{e.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => sostenerConteo(e.id)}
+                      className="shrink-0 rounded-lg bg-warning-foreground px-2.5 py-1 text-xs font-bold text-white"
+                    >
+                      Sostengo {e.quantity}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {error && (
+            <p className="mb-3 flex items-start gap-1.5 rounded-lg bg-destructive/10 p-2 text-sm text-destructive">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              {error}
+            </p>
+          )}
+
+          {pendientes > 0 && (
+            <p className="mb-2 text-center text-xs text-muted-foreground">
+              {pendientes} {pendientes === 1 ? 'conteo espera' : 'conteos esperan'} a que vuelva la red.
+            </p>
+          )}
+
+          <Button
+            size="block"
+            loading={enviando}
+            onClick={() => {
+              setEnviando(true)
+              void submitCount().finally(() => setEnviando(false))
+            }}
+            disabled={total === 0 || enviando || alertasSinResponder.length > 0}
+          >
             <Send className="h-[18px] w-[18px]" />
-            Enviar conteo al auditor
+            {enviando ? 'Enviando…' : 'Enviar conteo al auditor'}
           </Button>
         </div>
       </div>

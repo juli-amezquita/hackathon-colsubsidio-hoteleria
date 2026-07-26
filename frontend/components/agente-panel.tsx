@@ -41,10 +41,19 @@ export interface Turno {
 export function AgentePanel({
   rondaId,
   onConfirmar,
+  onHallazgo,
+  onSostener,
+  alertas,
   onEscribir,
 }: {
   rondaId: string
   onConfirmar: (item: ItemConfirmado) => void
+  /** Hallazgo: está en el estante y no en el catálogo (Historia 5). */
+  onHallazgo: (item: ItemConfirmado) => void
+  /** El operario sostiene su conteo pese a la alerta (FR-2.4). */
+  onSostener: (registroId: string) => void
+  /** Alertas que llegaron del servidor y siguen sin respuesta. */
+  alertas: { registroId: string; articuloId: string | null; nombre: string; cantidad: number }[]
   /** Salida al modo manual, para cuando el ruido gana (FR-1.21). */
   onEscribir: () => void
 }) {
@@ -54,6 +63,8 @@ export function AgentePanel({
   const [texto, setTexto] = useState('')
   const agenteRef = useRef<AgenteDeVoz | null>(null)
   const finRef = useRef<HTMLDivElement | null>(null)
+  /** Alertas ya cantadas: sin esto se repetirían en cada render. */
+  const dichas = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     finRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
@@ -66,13 +77,32 @@ export function AgentePanel({
   const agregar = (quien: Turno['quien'], t: string) =>
     setTurnos((prev) => [...prev.slice(-20), { quien, texto: t }])
 
+  // Una alerta que llega tarde se CANTA en cuanto llega.
+  //
+  // Es diferida por diseño: el conteo se confirma, se encola y el veredicto
+  // vuelve cuando el operario ya va en otro artículo. Antes se quedaba muda y
+  // reaparecía al final como un bloqueo que impedía cerrar la ronda y que nadie
+  // sabía de dónde salía.
+  useEffect(() => {
+    const agente = agenteRef.current
+    if (!agente) return
+    for (const a of alertas) {
+      if (dichas.current.has(a.registroId)) continue
+      dichas.current.add(a.registroId)
+      agente.avisarAlerta(a)
+    }
+  }, [alertas])
+
   async function encender() {
     setError(null)
     const agente = new AgenteDeVoz({
       alEscuchar: (t) => agregar('operario', t),
       alResponder: (t) => agregar('sistema', t),
       alConfirmar: onConfirmar,
+      alHallar: onHallazgo,
+      alSostener: onSostener,
       alCambiarEstado: setEstado,
+      alAvisar: (m) => agregar('sistema', m),
       alFallar: setError,
     })
     agenteRef.current = agente
