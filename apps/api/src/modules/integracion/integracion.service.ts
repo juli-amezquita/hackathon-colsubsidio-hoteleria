@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import type postgres from 'postgres';
 
 import { conexion } from '../../platform/db/cliente';
 import type { ProveedorDeSalidas, SalidaRegistrada } from '../../platform/dominio/estado';
@@ -128,12 +129,27 @@ export class IntegracionService implements ProveedorDeSalidas {
     const filas = await this.consolidado(bodegaId);
 
     return conexion().begin(async (trx) => {
+      // El periodo se calcula en hora de Colombia. Un cierre del 31 a las 20:00
+      // en Bogotá son las 01:00 UTC del día 1: truncando en UTC ese inventario
+      // caería en el mes siguiente y el mes que se acaba de cerrar quedaría sin
+      // cierre. Y los cierres de inventario son, por definición, de fin de mes.
+      const [mes] = await trx<{ periodo: string }[]>`
+        SELECT to_char(date_trunc('month', now() AT TIME ZONE 'America/Bogota'), 'YYYY-MM-DD') AS periodo`;
+      const periodo = mes!.periodo;
+
+      // La colisión es por bodega Y MES, no por bodega.
+      //
+      // Antes la clave primaria era `bodega_id` a secas: una bodega se podía
+      // cerrar UNA vez en la vida del sistema y el mes siguiente devolvía
+      // INVENTARIO_YA_CERRADO para siempre. No se había visto porque nadie
+      // había llegado a cerrar dos veces.
       const [yaCerrado] = await trx<{ cerrado_en: Date }[]>`
-        SELECT cerrado_en FROM cierre_inventario WHERE bodega_id = ${bodegaId}`;
+        SELECT cerrado_en FROM cierre_inventario
+        WHERE bodega_id = ${bodegaId} AND periodo = ${periodo}`;
       if (yaCerrado) {
         throw new BadRequestException({
           codigo: 'INVENTARIO_YA_CERRADO',
-          mensaje: `El inventario de esta bodega se cerró el ${yaCerrado.cerrado_en.toISOString()}.`,
+          mensaje: `El inventario de esta bodega ya se cerró este mes, el ${yaCerrado.cerrado_en.toISOString()}.`,
         });
       }
 
@@ -141,9 +157,12 @@ export class IntegracionService implements ProveedorDeSalidas {
       // ERP es exactamente lo que alguien firmó, y no una versión posterior.
       const hash = huella(filas);
 
-      await trx`
-        INSERT INTO cierre_inventario (bodega_id, cerrado_por, hash_consolidado)
-        VALUES (${bodegaId}, ${usuarioId}, ${hash})`;
+      const [cierre] = await trx<{ id: string }[]>`
+        INSERT INTO cierre_inventario (bodega_id, periodo, cerrado_por, hash_consolidado)
+        VALUES (${bodegaId}, ${periodo}, ${usuarioId}, ${hash})
+        RETURNING id`;
+
+      const congelados = await this.congelar(trx, cierre!.id, bodegaId, periodo);
 
       // ⚠️ LA TABLA MADRE SE MUEVE AQUÍ. En ningún otro punto del sistema.
       //
@@ -160,12 +179,80 @@ export class IntegracionService implements ProveedorDeSalidas {
 
       return {
         bodegaId,
+        periodo: periodo.slice(0, 7),
         cerradoEn: new Date().toISOString(),
         hashConsolidado: hash,
         articulos: filas.length,
         saldosActualizados: actualizados.length,
+        congeladosEnHistorico: congelados,
       };
     });
+  }
+
+  /**
+   * Congela el consolidado del mes. La única escritura de `consolidado_historico`.
+   *
+   * `articulo_consolidado` es una proyección VIVA: se recalcula entera cada vez
+   * que cierra una ronda, así que mirarla en marzo no dice qué se avaló en
+   * enero — dice qué se concluiría hoy con los registros de hoy. Para comparar
+   * meses hace falta una foto, y una foto no se recalcula: se toma una vez, en
+   * el instante del aval, y se queda quieta.
+   *
+   * Por eso se copian también el nombre, el código y la unidad: si dentro de
+   * seis meses alguien renombra un artículo, el informe de enero tiene que
+   * seguir diciendo cómo se llamaba en enero.
+   */
+  private async congelar(
+    trx: postgres.TransactionSql,
+    cierreId: string,
+    bodegaId: string,
+    periodo: string,
+  ): Promise<number> {
+    const articulos = await trx<{ id: string }[]>`
+      INSERT INTO consolidado_historico
+        (cierre_id, bodega_id, periodo, articulo_id, codigo, nombre, unidad,
+         clasificacion, motivo, cantidad_final, saldo_sistema, diferencia,
+         origen_valor, codigo_razon_id, rondas_afirmando, costo_unitario, valor_ajuste)
+      SELECT ${cierreId}, ${bodegaId}, ${periodo}, c.articulo_id,
+             a.codigo, a.nombre, u.nombre,
+             c.clasificacion, c.motivo_auditable::text,
+             c.valor_final, c.saldo_esperado_congelado,
+             -- NULL cuando falta uno de los dos. Un 0 aquí diría "cuadra", que
+             -- es una afirmación distinta de "no se puede saber".
+             CASE WHEN c.valor_final IS NOT NULL AND c.saldo_esperado_congelado IS NOT NULL
+                  THEN c.valor_final - c.saldo_esperado_congelado END,
+             c.origen_valor::text, d.codigo_razon_id, c.rondas_afirmando,
+             co.costo_unitario,
+             CASE WHEN co.costo_unitario IS NOT NULL
+                   AND c.valor_final IS NOT NULL
+                   AND c.saldo_esperado_congelado IS NOT NULL
+                  THEN round((c.valor_final - c.saldo_esperado_congelado) * co.costo_unitario, 2) END
+      FROM articulo_consolidado c
+      JOIN articulo a       ON a.id = c.articulo_id
+      JOIN unidad_medida u  ON u.id = COALESCE(c.unidad_id, a.unidad_esperada_id)
+      LEFT JOIN costo_articulo co
+             ON co.bodega_id = c.bodega_id AND co.articulo_id = c.articulo_id
+      LEFT JOIN discrepancia d
+             ON d.bodega_id = c.bodega_id AND d.articulo_id = c.articulo_id
+            AND d.estado = 'cerrada'
+      WHERE c.bodega_id = ${bodegaId}
+      RETURNING id`;
+
+    // Los hallazgos entran igual, pero nunca tienen saldo del sistema: esa es
+    // exactamente su definición. Estaban en la bodega y no en el ERP.
+    const fantasmas = await trx<{ id: string }[]>`
+      INSERT INTO consolidado_historico
+        (cierre_id, bodega_id, periodo, fantasma_id, nombre, unidad,
+         clasificacion, motivo, cantidad_final, codigo_razon_id, rondas_afirmando)
+      SELECT ${cierreId}, ${bodegaId}, ${periodo}, pf.id,
+             pf.descripcion, pf.unidad_observada,
+             'auditable', 'producto_fantasma', pf.cantidad, d.codigo_razon_id, 1
+      FROM producto_fantasma pf
+      LEFT JOIN discrepancia d ON d.fantasma_id = pf.id AND d.estado = 'cerrada'
+      WHERE pf.bodega_id = ${bodegaId}
+      RETURNING id`;
+
+    return articulos.length + fantasmas.length;
   }
 
   /**
@@ -179,8 +266,12 @@ export class IntegracionService implements ProveedorDeSalidas {
   async enviarAlErp(bodegaId: string, usuarioId: string) {
     await this.exigirInventarioAvalado(bodegaId);
 
+    // El ÚLTIMO cierre. Desde que los cierres son mensuales hay varios por
+    // bodega, y lo que se envía al ERP es el del mes que se acaba de avalar.
     const [cerrado] = await conexion()<{ hash_consolidado: string }[]>`
-      SELECT hash_consolidado FROM cierre_inventario WHERE bodega_id = ${bodegaId}`;
+      SELECT hash_consolidado FROM cierre_inventario
+      WHERE bodega_id = ${bodegaId}
+      ORDER BY cerrado_en DESC LIMIT 1`;
     if (!cerrado) {
       throw new BadRequestException({
         codigo: 'INVENTARIO_NO_CERRADO',
