@@ -71,9 +71,10 @@ docker pull "$IMAGEN"
 # la base no es alcanzable desde fuera. Si fallan, no se despliega nada.
 docker run --rm --env-file /opt/cci/.env "$IMAGEN" node dist/scripts/migrar.js up
 
-# Semillas desde el inventario del cliente. Idempotente: cada INSERT lleva
-# ON CONFLICT DO NOTHING, así que repetirlo no pisa nada de lo ya cargado.
-docker run --rm --env-file /opt/cci/.env "$IMAGEN" node dist/scripts/semillas.js
+# Semillas desde el inventario del cliente, SOLO si la base está vacía.
+# Sembrar es arrancar el sistema, no desplegarlo: con la base ya cargada esto
+# no hace nada y no debería poder tumbar un despliegue.
+docker run --rm --env-file /opt/cci/.env -e SOLO_SI_VACIA=1 "$IMAGEN" node dist/scripts/semillas.js
 
 # El reparto de rutas de nginx sale de la MISMA imagen, no de un archivo que
 # alguien dejó en la instancia hace tres despliegues.

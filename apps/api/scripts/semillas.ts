@@ -103,6 +103,24 @@ async function main(): Promise<void> {
   const sql = postgres(URL_BD, { max: 1, ssl: opcionesSsl(), onnotice: () => {} });
 
   try {
+    // Sembrar es arrancar el sistema, no desplegarlo.
+    //
+    // Cada despliegue vuelve a pasar por aquí, y con la base ya cargada eso son
+    // 1.400 INSERT que no insertan nada. Mientras funcionan son solo tiempo
+    // perdido; el día que uno falla —y falló— tumban un despliegue que no tenía
+    // nada que ver con las semillas.
+    //
+    // Con la base vacía sí tienen que correr, y ahí un fallo SÍ debe parar el
+    // despliegue: un sistema en pie sobre una base sin inventario es peor que
+    // uno que no arrancó, porque parece que funciona.
+    if (process.env['SOLO_SI_VACIA'] === '1') {
+      const [ya] = await sql<{ n: number }[]>`SELECT count(*)::int n FROM articulo`;
+      if ((ya?.n ?? 0) > 0) {
+        console.log(`La base ya tiene ${ya?.n} artículos. Las semillas no se repiten.`);
+        return;
+      }
+    }
+
     const clave = await hash(CLAVE, { algorithm: 2 });
 
     let totalArticulos = 0;
@@ -158,13 +176,27 @@ async function main(): Promise<void> {
       ] as const;
 
       for (const [doc, nombre, rol] of usuarios) {
-        const id = uid(`usuario:${doc}`);
         await t`INSERT INTO usuario (id, documento, nombre, hash_password, rol_id)
-                VALUES (${id}, ${doc}, ${nombre}, ${clave}, ${rol})
+                VALUES (${uid(`usuario:${doc}`)}, ${doc}, ${nombre}, ${clave}, ${rol})
                 ON CONFLICT (documento) DO NOTHING`;
+
+        // El id se LEE, no se supone.
+        //
+        // `uid(...)` es determinista, así que es tentador reusarlo abajo. Pero
+        // si ese documento ya existía con otro id —creado a mano, o por una
+        // versión anterior de este archivo— el INSERT de arriba no hace nada y
+        // el de `usuario_bodega` apunta a un usuario que no existe: viola la
+        // clave foránea y tumba las semillas enteras. Pasó en producción.
+        //
+        // Un `INSERT ... ON CONFLICT DO NOTHING` no devuelve la fila que ya
+        // estaba, así que hay que preguntarla.
+        const [fila] = await t<{ id: string }[]>`
+          SELECT id FROM usuario WHERE documento = ${doc}`;
+        if (!fila) continue;
+
         for (const hoja of hojasStock) {
           await t`INSERT INTO usuario_bodega (usuario_id, bodega_id)
-                  VALUES (${id}, ${uid(`bodega:${hoja}`)}) ON CONFLICT DO NOTHING`;
+                  VALUES (${fila.id}, ${uid(`bodega:${hoja}`)}) ON CONFLICT DO NOTHING`;
         }
       }
 
