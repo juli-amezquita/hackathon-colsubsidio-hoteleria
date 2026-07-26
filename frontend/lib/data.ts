@@ -72,13 +72,32 @@ export interface Warehouse {
  * construyeron las pantallas. Hacia el servidor viaja `operador`, que es el
  * rol que existe de verdad.
  */
-export type Role = 'afiliado' | 'auditor'
+export type Role = 'afiliado' | 'auditor' | 'admin'
 
 export const ROL_DEL_SERVIDOR: Record<Role, Rol> = {
   afiliado: 'operador',
   auditor: 'auditor',
+  admin: 'administrador',
 }
 
+/**
+ * El rol del servidor decide la pantalla. No hay selector.
+ *
+ * `supervisor` entra al mismo tablero que el Administrador: su modo consulta ya
+ * le da el estado de las bodegas (D-10), y negarle el mismo dato en forma de
+ * tabla sería una frontera que no protege nada. Lo que separa a los dos del
+ * Operador es otra cosa —las diferencias contra el saldo del sistema— y de eso
+ * se encarga el servidor, no este `switch`.
+ */
 export function rolDesdeServidor(rol: Rol): Role {
-  return rol === 'operador' ? 'afiliado' : 'auditor'
+  if (rol === 'operador') return 'afiliado'
+  if (rol === 'auditor') return 'auditor'
+  return 'admin'
+}
+
+/** A dónde se entra con cada rol, en un solo sitio. */
+export const INICIO: Record<Role, string> = {
+  afiliado: '/afiliado',
+  auditor: '/auditor',
+  admin: '/admin',
 }

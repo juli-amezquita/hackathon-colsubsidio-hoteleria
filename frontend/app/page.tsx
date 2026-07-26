@@ -1,11 +1,12 @@
 'use client'
 
-import { Lock, User, Eye, EyeOff, Warehouse } from 'lucide-react'
+import { Lock, User, Eye, EyeOff } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState, type FormEvent } from 'react'
 import { BrandLogo } from '@/components/brand-logo'
 import { TextField } from '@/components/text-field'
 import { Button } from '@/components/ui-button'
+import { INICIO } from '@/lib/data'
 import { useCountStore } from '@/lib/store'
 
 /**
@@ -25,6 +26,7 @@ import { useCountStore } from '@/lib/store'
 const ROTULOS = [
   { role: 'Afiliado', desc: 'Cuenta el inventario' },
   { role: 'Auditor', desc: 'Verifica el conteo' },
+  { role: 'Administración', desc: 'Métricas y cierre de mes' },
 ]
 
 const ACCESOS = (process.env.NEXT_PUBLIC_ACCESOS_DEMO ?? '')
@@ -53,7 +55,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (ready && session) {
-      router.replace(session.role === 'afiliado' ? '/afiliado' : '/auditor')
+      router.replace(INICIO[session.role])
     }
   }, [ready, session, router])
 
@@ -75,7 +77,9 @@ export default function LoginPage() {
         setLoading(false)
         return
       }
-      router.replace(result.role === 'afiliado' ? '/afiliado' : '/auditor')
+      // La pantalla la decide el ROL que devuelve el servidor. No hay selector
+      // ni ruta que memorizar: el mismo login lleva a cada quien a lo suyo.
+      router.replace(INICIO[result.role])
     })
   }
 

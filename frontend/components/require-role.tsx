@@ -4,7 +4,7 @@ import { Loader2 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useEffect, type ReactNode } from 'react'
 import { useCountStore } from '@/lib/store'
-import type { Role } from '@/lib/data'
+import { INICIO, type Role } from '@/lib/data'
 
 export function RequireRole({ role, children }: { role: Role; children: ReactNode }) {
   const router = useRouter()
@@ -15,7 +15,7 @@ export function RequireRole({ role, children }: { role: Role; children: ReactNod
     if (!session) {
       router.replace('/')
     } else if (session.role !== role) {
-      router.replace(session.role === 'afiliado' ? '/afiliado' : '/auditor')
+      router.replace(INICIO[session.role])
     }
   }, [ready, session, role, router])
 
