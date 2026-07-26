@@ -16,6 +16,7 @@ const RUTAS_API = [
   'aprendizaje',
   'consulta',
   'integracion',
+  'metricas',
   'voz',
   'salud',
   'tiempo',

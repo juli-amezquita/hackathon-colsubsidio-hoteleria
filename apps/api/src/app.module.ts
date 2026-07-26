@@ -9,6 +9,7 @@ import { ConsultaModule } from './modules/consulta/consulta.module';
 import { ConsolidacionModule } from './modules/consolidacion/consolidacion.module';
 import { IdentidadModule } from './modules/identidad/identidad.module';
 import { IntegracionModule } from './modules/integracion/integracion.module';
+import { MetricasModule } from './modules/metricas/metricas.module';
 import { SaludModule } from './platform/salud/salud.module';
 import { PresenciaModule } from './modules/presencia/presencia.module';
 import { ProveedoresModule } from './proveedores/proveedores.module';
@@ -31,6 +32,7 @@ import { ProveedoresModule } from './proveedores/proveedores.module';
     IntegracionModule,
     AprendizajeModule,
     ConsultaModule,
+    MetricasModule,
     // Arranca el despachador del outbox: sin él los eventos se escriben y
     // nadie los consume (Principio IV).
     DespachoModule,
