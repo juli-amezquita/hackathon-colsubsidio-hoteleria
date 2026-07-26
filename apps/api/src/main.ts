@@ -69,6 +69,7 @@ async function arrancar(): Promise<void> {
       [
         `voz=${c.PROVEEDOR_VOZ}`,
         `agente-voz=${c.PROVEEDOR_AGENTE_VOZ}`,
+        `tts=${c.PROVEEDOR_TTS}`,
         `arbitraje=${c.PROVEEDOR_ARBITRAJE}`,
         `interpretacion=${c.PROVEEDOR_INTERPRETACION}`,
         `erp=${c.PROVEEDOR_ERP}`,

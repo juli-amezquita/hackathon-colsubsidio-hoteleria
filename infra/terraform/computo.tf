@@ -79,6 +79,26 @@ resource "aws_iam_role_policy" "backend" {
           StringEquals = { "cloudwatch:namespace" = "CapturaInventarios" }
         }
       },
+      {
+        # La voz del agente.
+        #
+        # El plan gratuito de Gemini da DIEZ llamadas de síntesis al día por
+        # modelo: un conteo real las agota en los primeros minutos y el operario
+        # se queda leyendo. Polly no tiene ese techo y, sobre todo, es un
+        # sintetizador de verdad: dice EXACTAMENTE el texto que recibe.
+        #
+        # Esa distinción no es de calidad, es de arquitectura. Se probó
+        # `gpt-audio-mini` por OpenRouter y, aun ordenándole a temperatura 0 que
+        # repitiera palabra por palabra, reescribía la frase e improvisaba
+        # consejos para el operario. Un modelo conversacional ELIGE qué decir;
+        # aquí lo que se dice lo escribe `dialogo.ts` y nada más.
+        #
+        # Sin credencial que gestionar: la instancia firma con su propio rol.
+        Sid      = "SintetizarVozDelAgente"
+        Effect   = "Allow"
+        Action   = ["polly:SynthesizeSpeech", "polly:DescribeVoices"]
+        Resource = "*"
+      },
     ]
   })
 }
@@ -139,6 +159,15 @@ resource "aws_instance" "backend" {
 
   metadata_options {
     http_tokens = "required" # IMDSv2 obligatorio
+
+    # DOS saltos, y es imprescindible: la API corre DENTRO de un contenedor.
+    #
+    # Con el límite en 1, el paquete muere en la frontera de la red de Docker y
+    # el SDK de AWS nunca alcanza el servicio de metadatos: Polly fallaría con
+    # «credenciales no encontradas» en cada frase, y la causa no se parecería en
+    # nada al síntoma. Hoy vale 2 por el valor por defecto de AWS; queda
+    # declarado para que no dependa de eso.
+    http_put_response_hop_limit = 2
   }
 
   tags = { Name = "${local.nombre}-backend" }

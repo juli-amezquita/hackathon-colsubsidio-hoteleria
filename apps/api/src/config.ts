@@ -37,6 +37,24 @@ const EsquemaEntorno = z.object({
   PROVEEDOR_AGENTE_VOZ: z.enum(['simulado', 'grok', 'gemini']).default('simulado'),
   XAI_API_KEY: z.string().optional(),
   GEMINI_API_KEY: z.string().optional(),
+
+  /**
+   * Quién PRONUNCIA lo que el sistema dice. Oír y hablar son proveedores
+   * distintos: escuchar sigue siendo Gemini Live pase lo que pase aquí.
+   *
+   * Por defecto `polly` porque la capa gratuita de Gemini da diez síntesis al
+   * día por modelo y un conteo real las agota en los primeros minutos.
+   * `ninguno` deja el sistema solo con texto, que sigue siendo suficiente para
+   * contar. Ver `proveedores/sintesis/puerto.ts`.
+   */
+  PROVEEDOR_TTS: z.enum(['polly', 'gemini', 'ninguno']).default('polly'),
+  /**
+   * Polly firma con el rol de la instancia, pero la región **no** viaja en el
+   * rol: el SDK v3 la busca en el entorno y, si no está, cada llamada muere con
+   * «Region is missing». El valor por defecto es el mismo que el de
+   * `infra/terraform/variables.tf`.
+   */
+  AWS_REGION: z.string().default('us-east-1'),
   /** Oracle Fusion Cloud Inventory Management (SPEC §6). Sin verificar. */
   ERP_BASE_URL: z.string().url().optional(),
   ERP_USUARIO: z.string().optional(),
@@ -69,6 +87,9 @@ export function config(): Configuracion {
   exigirCredencial(c.PROVEEDOR_INTERPRETACION === 'anthropic', 'PROVEEDOR_INTERPRETACION=anthropic', 'OPENROUTER_API_KEY', c.OPENROUTER_API_KEY);
   exigirCredencial(c.PROVEEDOR_AGENTE_VOZ === 'gemini', 'PROVEEDOR_AGENTE_VOZ=gemini', 'GEMINI_API_KEY', c.GEMINI_API_KEY);
   exigirCredencial(c.PROVEEDOR_AGENTE_VOZ === 'grok', 'PROVEEDOR_AGENTE_VOZ=grok', 'XAI_API_KEY', c.XAI_API_KEY);
+  // `polly` no aparece aquí a propósito: no tiene credencial que exigir, firma
+  // con el rol de IAM de la instancia.
+  exigirCredencial(c.PROVEEDOR_TTS === 'gemini', 'PROVEEDOR_TTS=gemini', 'GEMINI_API_KEY', c.GEMINI_API_KEY);
   exigirCredencial(c.PROVEEDOR_ERP === 'oracle', 'PROVEEDOR_ERP=oracle', 'ERP_BASE_URL', c.ERP_BASE_URL);
   exigirCredencial(c.PROVEEDOR_ERP === 'oracle', 'PROVEEDOR_ERP=oracle', 'ERP_USUARIO', c.ERP_USUARIO);
   exigirCredencial(c.PROVEEDOR_ERP === 'oracle', 'PROVEEDOR_ERP=oracle', 'ERP_PASSWORD', c.ERP_PASSWORD);

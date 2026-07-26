@@ -1,5 +1,8 @@
 import { WebSocket } from 'ws';
 
+import { sintetizador } from '../sintesis/fabrica';
+import { SinCupoDeVoz, type PuertoDeSintesis } from '../sintesis/puerto';
+
 /**
  * La conexión con Gemini Live, vista desde nuestro servidor.
  *
@@ -61,13 +64,10 @@ const MODELO = 'models/gemini-3.1-flash-live-preview';
  * comodidad — un modelo que no habla no puede decir el saldo esperado (FR-1.18)
  * ni la dirección de una discrepancia (FR-2.2), por mucho que se lo pidan.
  *
+ * Quién sintetiza lo decide `PROVEEDOR_TTS` y vive en `proveedores/sintesis/`.
  * Live se queda solo con los oídos: transcribe el micrófono. Su audio se
  * descarta sin escucharlo.
  */
-const MODELO_VOZ = 'gemini-2.5-flash-preview-tts';
-
-/** Verificada contra la API. `Charon` y `Puck` devuelven 429 en capa gratuita. */
-const VOZ = 'Kore';
 
 const URL_BASE =
   'wss://generativelanguage.googleapis.com/ws/' +
@@ -96,6 +96,14 @@ export interface OpcionesSesion {
   /** Algo que el operario debe saber, sin que sea un error fatal. */
   readonly alAvisar: (mensaje: string) => void;
   readonly alCerrar: (motivo: string) => void;
+  /**
+   * Quién pone la voz. Por omisión, el que diga `PROVEEDOR_TTS`.
+   *
+   * Se puede pasar explícitamente para probar la degradación sin red: es el
+   * único camino por el que el sistema deja de hablar, y no probarlo sería
+   * confiar en que un `catch` que nadie ha ejecutado hace lo que dice.
+   */
+  readonly sintesis?: PuertoDeSintesis | null;
 }
 
 /**
@@ -121,8 +129,14 @@ export class SesionDeVoz {
   private avisoDeVozDado = false;
   /** La transcripción llega por trozos; se acumula hasta el fin del turno. */
   private parcial = '';
+  /** `null` = `PROVEEDOR_TTS=ninguno`: el sistema no habla, y está bien. */
+  private readonly sintesis: PuertoDeSintesis | null;
 
-  constructor(private readonly opciones: OpcionesSesion) {}
+  constructor(private readonly opciones: OpcionesSesion) {
+    // `undefined` es "elige tú"; `null` explícito es "no hables". No se puede
+    // colapsar con `??` sin perder la diferencia.
+    this.sintesis = opciones.sintesis !== undefined ? opciones.sintesis : sintetizador();
+  }
 
   abrir(): void {
     const ws = new WebSocket(`${URL_BASE}?key=${this.opciones.claveApi}`);
@@ -228,8 +242,12 @@ export class SesionDeVoz {
         // parece roto.
         if (!this.avisoDeVozDado) {
           this.avisoDeVozDado = true;
+          // Solo el adaptador sabe si lo suyo fue quedarse sin cupo, y la
+          // diferencia decide qué hay que hacer: recargar la cuenta del
+          // proveedor o mirar el código. Polly no tiene techo diario, así que
+          // un fallo suyo nunca dirá "se agotó el cupo" — diría una mentira.
           this.opciones.alAvisar(
-            e instanceof Error && e.message.includes('429')
+            e instanceof SinCupoDeVoz
               ? 'Se agotó el cupo de voz del proveedor. Sigue funcionando por texto.'
               : 'La voz falló. Sigue funcionando por texto.',
           );
@@ -237,37 +255,9 @@ export class SesionDeVoz {
       });
   }
 
+  /** Delega en el proveedor de `PROVEEDOR_TTS`. Sin proveedor, no hay audio. */
   private async sintetizar(texto: string): Promise<Buffer | null> {
-    const r = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${MODELO_VOZ}:generateContent`,
-      {
-        method: 'POST',
-        headers: {
-          'x-goog-api-key': this.opciones.claveApi,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: texto }] }],
-          generationConfig: {
-            responseModalities: ['AUDIO'],
-            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: VOZ } } },
-          },
-        }),
-      },
-    );
-
-    if (!r.ok) {
-      // El 429 se distingue del resto: en capa gratuita llega enseguida, y
-      // confundirlo con "falló la voz" haría que nadie supiera que lo que hay
-      // que hacer es recargar el proveedor, no revisar el código.
-      throw new Error(`TTS ${r.status}`);
-    }
-
-    const cuerpo = (await r.json()) as {
-      candidates?: { content?: { parts?: { inlineData?: { data?: string } }[] } }[];
-    };
-    const b64 = cuerpo.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-    return typeof b64 === 'string' ? Buffer.from(b64, 'base64') : null;
+    return this.sintesis ? await this.sintesis.sintetizar(texto) : null;
   }
 
   cerrar(): void {

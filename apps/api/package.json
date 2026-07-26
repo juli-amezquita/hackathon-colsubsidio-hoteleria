@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
+    "@aws-sdk/client-polly": "^3.1095.0",
     "@cci/contracts": "workspace:*",
     "@cci/gramatica": "workspace:*",
     "@fastify/cookie": "^11.0.2",
